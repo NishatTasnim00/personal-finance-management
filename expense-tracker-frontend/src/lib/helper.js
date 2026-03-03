@@ -61,6 +61,7 @@ export const defaultExpenseTypes = [
     icon: Gamepad2,
     color: "#8B5CF6",
   },
+  { name: "Dining Out", value: "diningOut", icon: Utensils, color: "#EC4899" },
   {
     name: "Bills & Utilities",
     value: "bills",

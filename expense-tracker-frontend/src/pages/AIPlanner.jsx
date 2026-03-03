@@ -227,7 +227,7 @@ const AIPlanner = () => {
                         <div className="space-y-3">
                             {Object.entries(plan.needsBreakdown || {}).map(([cat, amt]) => (
                                 <div key={cat} className="flex justify-between items-center">
-                                    <span>{cat}</span>
+                                    <span className="capitalize">{cat}</span>
                                     <span className="font-bold">৳{amt.toLocaleString()}</span>
                                 </div>
                             ))}
@@ -250,7 +250,7 @@ const AIPlanner = () => {
                         <div className="space-y-3">
                             {Object.entries(plan.wantsBreakdown || {}).map(([cat, amt]) => (
                                 <div key={cat} className="flex justify-between items-center">
-                                    <span>{cat}</span>
+                                    <span className="capitalize">{cat}</span>
                                     <span className="font-bold">৳{amt.toLocaleString()}</span>
                                 </div>
                             ))}
