@@ -36,7 +36,8 @@ class KeywordCategorizer:
         "health":        "health",
         "education":     "education",
         "transport":     "transport",
-        "food":          "food",
+        "food":          "diningOut",
+        "diningOut":     "diningOut",
         "entertainment": "entertainment",
         "shopping":      "shopping",
         "travel":        "travel",
@@ -58,6 +59,7 @@ class KeywordCategorizer:
         (["daraz", "clothing", "fashion", "shoes", "bag", "accessories", "shopping"], "shopping"),
         (["travel", "hotel", "flight", "trip", "vacation", "tour"], "travel"),
         (["gym", "fitness", "yoga", "sport", "workout"], "fitness"),
+        (["diningOut"], "diningOut")
     ]
 
     def predict(self, category: str, description: str = "") -> str:
@@ -94,7 +96,7 @@ class BudgetAI:
     }
 
     WANTS_LABELS = {
-        "food",          # Food & Dining
+        "diningOut",          # Food & Dining
         "shopping",      # Shopping
         "entertainment", # Entertainment
         "travel",        # Travel
@@ -346,7 +348,7 @@ class BudgetAI:
             notes.append("No discretionary history — using standard starter allocation.")
             avail_wants = min(wants_cap, max(0.0, spending_cap - sum(needs_breakdown.values())))
             wants_breakdown = {
-                "diningOut":          int(avail_wants * 0.35),
+                "diningOut":     int(avail_wants * 0.35),
                 "entertainment": int(avail_wants * 0.25),
                 "shopping":      int(avail_wants * 0.25),
                 "travel":        int(avail_wants * 0.10),
