@@ -255,7 +255,22 @@ export const deleteBudgetPlan = async (req, res) => {
       return res.status(404).json({ message: "No plan found for this month" });
     }
 
-    res.json({ success: true, message: "Plan deleted" });
+    // If the plan was accepted, also delete all Budget records it created
+    if (deleted.isAccepted) {
+      const planCategories = [
+        ...Object.keys(Object.fromEntries(deleted.needsBreakdown)),
+        ...Object.keys(Object.fromEntries(deleted.wantsBreakdown)),
+      ];
+      if (planCategories.length > 0) {
+        await Budget.deleteMany({
+          userId,
+          category: { $in: planCategories },
+          period: "monthly",
+        });
+      }
+    }
+
+    res.json({ success: true, message: "Plan and associated budgets deleted" });
   } catch (error) {
     console.error("deleteBudgetPlan error:", error);
     res.status(500).json({ message: "Server error" });
