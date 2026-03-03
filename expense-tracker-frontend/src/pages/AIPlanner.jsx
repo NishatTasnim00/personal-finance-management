@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import api from "@/lib/api";
 import { Brain, Shield, ShoppingBag, AlertCircle, Calendar, Check, Save, X } from "lucide-react";
 import { toastSuccess, toastError} from '@/lib/toast'
+import { useAcceptBudgetPlan, useDeleteBudgetPlan } from "@/hooks/budget";
 
 const AIPlanner = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -10,8 +11,10 @@ const AIPlanner = () => {
   const [plan, setPlan] = useState(null);
   const [error, setError] = useState(null);
   const [totalBudget, setTotalBudget] = useState("");
-  const [accepting, setAccepting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const acceptMutation = useAcceptBudgetPlan();
+  const deleteMutation = useDeleteBudgetPlan();
+  const accepting = acceptMutation.isPending;
+  const deleting = deleteMutation.isPending;
 
   const fetchPlan = useCallback(async () => {
     setFetching(true);
@@ -57,40 +60,18 @@ const AIPlanner = () => {
     }
   };
 
-  const acceptPlan = async () => {
+  const acceptPlan = () => {
     if (!plan) return;
-    setAccepting(true);
-    try {
-        const res = await api.post("/ai/accept-plan", {
-            month: selectedMonth
-        });
-        if (res.success) {
-            setPlan({ ...plan, isAccepted: true });
-            toastSuccess("Budget updated successfully!");
-        }
-    } catch (err) {
-        console.error(err);
-        toastError(err.response?.data?.message || "Failed to accept plan");
-    } finally {
-        setAccepting(false);
-    }
+    acceptMutation.mutate(selectedMonth, {
+      onSuccess: () => setPlan({ ...plan, isAccepted: true }),
+    });
   };
 
-  const deletePlan = async () => {
+  const deletePlan = () => {
     if (!plan) return;
-    setDeleting(true);
-    try {
-      const res = await api.delete(`/ai/plan?month=${selectedMonth}`);
-      if (res.success) {
-        setPlan(null);
-        toastSuccess("Plan deleted.");
-      }
-    } catch (err) {
-      console.error(err);
-      toastError(err.response?.data?.message || "Failed to delete plan");
-    } finally {
-      setDeleting(false);
-    }
+    deleteMutation.mutate(selectedMonth, {
+      onSuccess: () => setPlan(null),
+    });
   };
 
   return (
@@ -227,7 +208,7 @@ const AIPlanner = () => {
                         <div className="space-y-3">
                             {Object.entries(plan.needsBreakdown || {}).map(([cat, amt]) => (
                                 <div key={cat} className="flex justify-between items-center">
-                                    <span className="capitalize">{cat}</span>
+                                    <span>{cat}</span>
                                     <span className="font-bold">৳{amt.toLocaleString()}</span>
                                 </div>
                             ))}
@@ -250,7 +231,7 @@ const AIPlanner = () => {
                         <div className="space-y-3">
                             {Object.entries(plan.wantsBreakdown || {}).map(([cat, amt]) => (
                                 <div key={cat} className="flex justify-between items-center">
-                                    <span className="capitalize">{cat}</span>
+                                    <span>{cat}</span>
                                     <span className="font-bold">৳{amt.toLocaleString()}</span>
                                 </div>
                             ))}

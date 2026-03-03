@@ -202,33 +202,25 @@ export const acceptBudgetPlan = async (req, res) => {
       return res.status(404).json({ message: "Plan not found" });
     }
 
-    // Merge needs and wants
-    // Convert Map to Object if needed, or iterate keys
-    // Mongoose Maps are iterable
     const allCategories = {
       ...Object.fromEntries(plan.needsBreakdown),
       ...Object.fromEntries(plan.wantsBreakdown),
     };
 
-    const promises = Object.entries(allCategories).map(
-      async ([category, amount]) => {
-        // Upsert Budget
-        // Note: This updates the "Monthly" budget for this category globally
-        // as the Budget model is per-category-per-period
-        return Budget.findOneAndUpdate(
-          { userId, category, period: "monthly" },
-          {
-            amount,
-            startDate: new Date(), // Reset start date? Or keep? Usually we keep.
-            // If we want to restart the budget cycle, we might update startDate.
-            // For now, let's just update the amount.
-          },
-          { upsert: true, new: true },
-        );
-      },
-    );
+    // Wipe ALL existing monthly budgets so stale categories from old plans
+    // (or previous label-name changes) are fully removed before re-creating
+    await Budget.deleteMany({ userId, period: "monthly" });
 
-    await Promise.all(promises);
+    // Create exactly the categories in this plan — no more, no less
+    await Budget.insertMany(
+      Object.entries(allCategories).map(([category, amount]) => ({
+        userId,
+        category,
+        amount,
+        period: "monthly",
+        startDate: new Date(),
+      }))
+    );
 
     plan.isAccepted = true;
     await plan.save();
@@ -255,18 +247,14 @@ export const deleteBudgetPlan = async (req, res) => {
       return res.status(404).json({ message: "No plan found for this month" });
     }
 
-    // If the plan was accepted, also delete all Budget records it created
+    // If the plan was accepted, also remove the Budget records it created
     if (deleted.isAccepted) {
       const planCategories = [
         ...Object.keys(Object.fromEntries(deleted.needsBreakdown)),
         ...Object.keys(Object.fromEntries(deleted.wantsBreakdown)),
       ];
       if (planCategories.length > 0) {
-        await Budget.deleteMany({
-          userId,
-          category: { $in: planCategories },
-          period: "monthly",
-        });
+        await Budget.deleteMany({ userId, category: { $in: planCategories }, period: "monthly" });
       }
     }
 

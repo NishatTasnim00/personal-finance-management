@@ -55,3 +55,37 @@ export const useDeleteBudget = () => {
     onError: () => toastError("Failed to delete budget"),
   });
 };
+
+export const useAcceptBudgetPlan = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (month) => api.post("/ai/accept-plan", { month }),
+
+    onSuccess: () => {
+      toastSuccess("Budget updated successfully!");
+      // Refresh budget table immediately — no page reload needed
+      queryClient.invalidateQueries({ queryKey: ["budgets"] });
+    },
+
+    onError: (err) =>
+      toastError(err?.response?.data?.message || "Failed to accept plan"),
+  });
+};
+
+export const useDeleteBudgetPlan = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (month) => api.delete(`/ai/plan?month=${month}`),
+
+    onSuccess: () => {
+      toastSuccess("Plan deleted.");
+      // Also refresh budgets since accepted plan's budgets are removed
+      queryClient.invalidateQueries({ queryKey: ["budgets"] });
+    },
+
+    onError: (err) =>
+      toastError(err?.response?.data?.message || "Failed to delete plan"),
+  });
+};
