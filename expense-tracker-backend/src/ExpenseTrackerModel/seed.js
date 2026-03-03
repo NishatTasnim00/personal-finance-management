@@ -61,8 +61,8 @@ const expenseTemplates = [
   { category: "health",     description: "Medicine / Pharmacy",min: 300,   max: 800,   recurring: false, freq: null,      daysOfMonth: [14] },
 
   // Wants - lifestyle
-  { category: "food",       description: "Restaurant / Dining",min: 500,   max: 1500,  recurring: false, freq: null,      daysOfMonth: [8, 22] },
-  { category: "food",       description: "Foodpanda / Delivery",min: 300,  max: 700,   recurring: false, freq: null,      daysOfMonth: [15] },
+  { category: "dining",     description: "Restaurant / Dining",min: 500,   max: 1500,  recurring: false, freq: null,      daysOfMonth: [8, 22] },
+  { category: "dining",     description: "Foodpanda / Delivery",min: 300,  max: 700,   recurring: false, freq: null,      daysOfMonth: [15] },
   { category: "entertainment", description: "Netflix subscription", min: 650, max: 650, recurring: true, freq: "monthly", daysOfMonth: [1] },
   { category: "entertainment", description: "Movies / Cinema", min: 400,   max: 800,   recurring: false, freq: null,      daysOfMonth: [20] },
   { category: "shopping",   description: "Clothing / Daraz",   min: 1000,  max: 3000,  recurring: false, freq: null,      daysOfMonth: [25] },

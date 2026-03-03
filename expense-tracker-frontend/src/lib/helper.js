@@ -1,4 +1,3 @@
-// lib/helper.js — FINAL & PERFECT
 import { format } from "date-fns";
 import {
   Briefcase,
@@ -10,6 +9,7 @@ import {
   PiggyBank,
   HandCoins,
   Utensils,
+  UtensilsCrossed,
   Car,
   ShoppingBag,
   Gamepad2,
@@ -52,7 +52,7 @@ export const defaultIncomeSources = [
 ];
 
 export const defaultExpenseTypes = [
-  { name: "Food & Dining", value: "food", icon: Utensils, color: "#F59E0B" },
+  { name: "Dining Out", value: "dining", icon: UtensilsCrossed, color: "#F59E0B" },
   { name: "Transport", value: "transport", icon: Car, color: "#3B82F6" },
   { name: "Shopping", value: "shopping", icon: ShoppingBag, color: "#EC4899" },
   {
@@ -61,7 +61,6 @@ export const defaultExpenseTypes = [
     icon: Gamepad2,
     color: "#8B5CF6",
   },
-  { name: "Dining Out", value: "diningOut", icon: Utensils, color: "#EC4899" },
   {
     name: "Bills & Utilities",
     value: "bills",

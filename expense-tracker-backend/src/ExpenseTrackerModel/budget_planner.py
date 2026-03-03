@@ -36,8 +36,8 @@ class KeywordCategorizer:
         "health":        "health",
         "education":     "education",
         "transport":     "transport",
-        "food":          "diningOut",
-        "diningOut":     "diningOut",
+        "food":          "food",        # legacy - maps to groceries context
+        "dining":        "dining",      # Dining Out - restaurant/delivery (want)
         "entertainment": "entertainment",
         "shopping":      "shopping",
         "travel":        "travel",
@@ -54,12 +54,11 @@ class KeywordCategorizer:
         (["school", "college", "university", "tuition", "tution", "coach", "education", "books"], "education"),
         (["doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"], "health"),
         (["bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro", "transport"], "transport"),
-        (["restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "fast food", "kfc", "pizza"], "food"),
+        (["restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "fast food", "kfc", "pizza", "delivery"], "dining"),
         (["netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "entertainment", "subscription"], "entertainment"),
         (["daraz", "clothing", "fashion", "shoes", "bag", "accessories", "shopping"], "shopping"),
         (["travel", "hotel", "flight", "trip", "vacation", "tour"], "travel"),
         (["gym", "fitness", "yoga", "sport", "workout"], "fitness"),
-        (["diningOut"], "diningOut")
     ]
 
     def predict(self, category: str, description: str = "") -> str:
@@ -96,7 +95,8 @@ class BudgetAI:
     }
 
     WANTS_LABELS = {
-        "diningOut",          # Food & Dining
+        "food",          # legacy food category → treat as want if not groceries
+        "dining",        # Dining Out — restaurants, food delivery (want)
         "shopping",      # Shopping
         "entertainment", # Entertainment
         "travel",        # Travel
@@ -348,7 +348,7 @@ class BudgetAI:
             notes.append("No discretionary history — using standard starter allocation.")
             avail_wants = min(wants_cap, max(0.0, spending_cap - sum(needs_breakdown.values())))
             wants_breakdown = {
-                "diningOut":     int(avail_wants * 0.35),
+                "dining":        int(avail_wants * 0.35),
                 "entertainment": int(avail_wants * 0.25),
                 "shopping":      int(avail_wants * 0.25),
                 "travel":        int(avail_wants * 0.10),
