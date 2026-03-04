@@ -11,6 +11,7 @@ const budgetSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      lowercase: true,
     },
     amount: {
       type: Number,
@@ -22,18 +23,33 @@ const budgetSchema = new mongoose.Schema(
       enum: ['weekly', 'monthly', 'yearly'],
       required: true,
     },
+    // Exact start and end of this budget's time window
+    // e.g. monthly → Mar 1 00:00:00  to  Mar 31 23:59:59
+    // e.g. weekly  → Mar 17 00:00:00 to  Mar 23 23:59:59
+    // e.g. yearly  → Jan 1 00:00:00  to  Dec 31 23:59:59
     startDate: {
       type: Date,
-      default: Date.now,
+      required: true,
     },
-    spent: {
-      type: Number,
-      default: 0,
+    endDate: {
+      type: Date,
+      required: true,
+    },
+    // null = manually created, ObjectId = created from an AI plan
+    aiPlanId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BudgetPlan',
+      default: null,
+    },
+    isAIGenerated: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }
 );
 
-budgetSchema.index({ userId: 1, category: 1, period: 1 }, { unique: true });
+// One budget per category per exact time window per user
+budgetSchema.index({ userId: 1, category: 1, startDate: 1, endDate: 1 }, { unique: true });
 
 export default mongoose.model('Budget', budgetSchema);

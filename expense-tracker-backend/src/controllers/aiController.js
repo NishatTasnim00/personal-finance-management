@@ -103,46 +103,26 @@ export const generateBudgetPlan = async (req, res) => {
     // Calculate monthly income if not provided
     let calculatedIncome = monthlyIncome;
 
-    // 1. Try Last Month's Income
-    if (!calculatedIncome) {
-      const lastMonth = new Date();
-      lastMonth.setMonth(lastMonth.getMonth() - 1);
-      const startOfMonth = new Date(
-        lastMonth.getFullYear(),
-        lastMonth.getMonth(),
-        1,
-      );
-      const endOfMonth = new Date(
-        lastMonth.getFullYear(),
-        lastMonth.getMonth() + 1,
-        0,
-      );
-
-      const incomes = await Income.aggregate([
-        {
-          $match: {
-            userId,
-            date: { $gte: startOfMonth, $lte: endOfMonth },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$amount" },
-          },
-        },
-      ]);
-
-      if (incomes.length > 0 && incomes[0].total > 0) {
-        calculatedIncome = incomes[0].total;
-      }
-    }
-
-    // 2. Try User Profile Income
+    // 1. User profile monthly income (most reliable)
     if (!calculatedIncome) {
       const user = await User.findOne({ uid: userId });
       if (user && user.monthlyIncome > 0) {
         calculatedIncome = user.monthlyIncome;
+      }
+    }
+
+    // 2. Fallback: last month's actual income
+    if (!calculatedIncome) {
+      const lastMonth = new Date();
+      lastMonth.setMonth(lastMonth.getMonth() - 1);
+      const startOfMonth = new Date(lastMonth.getFullYear(), lastMonth.getMonth(), 1);
+      const endOfMonth   = new Date(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0);
+      const incomes = await Income.aggregate([
+        { $match: { userId, date: { $gte: startOfMonth, $lte: endOfMonth } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+      if (incomes.length > 0 && incomes[0].total > 0) {
+        calculatedIncome = incomes[0].total;
       }
     }
 
@@ -207,18 +187,25 @@ export const acceptBudgetPlan = async (req, res) => {
       ...Object.fromEntries(plan.wantsBreakdown),
     };
 
-    // Wipe ALL existing monthly budgets so stale categories from old plans
-    // (or previous label-name changes) are fully removed before re-creating
-    await Budget.deleteMany({ userId, period: "monthly" });
+    // Build startDate/endDate for the plan's month
+    const [planYear, planMon] = plan.month.split("-").map(Number);
+    const startDate = new Date(planYear, planMon - 1, 1);
+    const endDate   = new Date(planYear, planMon, 0, 23, 59, 59, 999);
 
-    // Create exactly the categories in this plan — no more, no less
+    // Remove any existing AI-generated budgets for this plan (clean slate)
+    await Budget.deleteMany({ userId, aiPlanId: plan._id });
+
+    // Create one budget per category, stamped with this plan's month window
     await Budget.insertMany(
       Object.entries(allCategories).map(([category, amount]) => ({
         userId,
-        category,
+        category: category.toLowerCase(),
         amount,
         period: "monthly",
-        startDate: new Date(),
+        startDate,
+        endDate,
+        aiPlanId: plan._id,
+        isAIGenerated: true,
       }))
     );
 
@@ -247,18 +234,10 @@ export const deleteBudgetPlan = async (req, res) => {
       return res.status(404).json({ message: "No plan found for this month" });
     }
 
-    // If the plan was accepted, also remove the Budget records it created
-    if (deleted.isAccepted) {
-      const planCategories = [
-        ...Object.keys(Object.fromEntries(deleted.needsBreakdown)),
-        ...Object.keys(Object.fromEntries(deleted.wantsBreakdown)),
-      ];
-      if (planCategories.length > 0) {
-        await Budget.deleteMany({ userId, category: { $in: planCategories }, period: "monthly" });
-      }
-    }
+    // Delete all budgets that were created from this plan
+    await Budget.deleteMany({ userId, aiPlanId: deleted._id });
 
-    res.json({ success: true, message: "Plan and associated budgets deleted" });
+    res.json({ success: true, message: "Plan deleted" });
   } catch (error) {
     console.error("deleteBudgetPlan error:", error);
     res.status(500).json({ message: "Server error" });
