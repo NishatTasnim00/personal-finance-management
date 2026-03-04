@@ -165,11 +165,42 @@ export const generateBudgetPlan = async (req, res) => {
       pinned_categories[label] = b.amount;
     }
 
+    // Check last month's budgets for exceeded categories
+    const lastMonthDate = new Date(planYear, planMon - 2, 1);
+    const lastMonthStart = new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth(), 1);
+    const lastMonthEnd   = new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const lastMonthBudgets = await Budget.find({
+      userId,
+      startDate: { $lte: lastMonthEnd },
+      endDate:   { $gte: lastMonthStart },
+    }).lean();
+
+    // For each last month budget, calculate actual spending
+    const exceededCategories = [];
+    for (const b of lastMonthBudgets) {
+      const spentResult = await Expense.aggregate([
+        { $match: { userId, category: b.category, date: { $gte: b.startDate, $lte: b.endDate } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+      const spent = spentResult[0]?.total || 0;
+      if (spent > b.amount) {
+        const categoryLabel = categoryToLabel[b.category] || b.category;
+        exceededCategories.push({
+          category: categoryLabel,
+          budget: b.amount,
+          spent: Math.round(spent),
+          exceededBy: Math.round(spent - b.amount),
+        });
+      }
+    }
+
     const inputData = {
       transactions,
       monthly_income: Number(calculatedIncome) || 50000,
       total_budget: totalBudget ? Number(totalBudget) : null,
       pinned_categories,
+      exceeded_last_month: exceededCategories,
     };
 
     // Run AI

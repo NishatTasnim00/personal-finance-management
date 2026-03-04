@@ -203,6 +203,7 @@ class BudgetAI:
         monthly_income: float = None,
         total_budget: float = None,
         pinned_categories: dict = None,
+        exceeded_last_month: list = None,
     ) -> dict:
         """
         Builds a personalized monthly budget.
@@ -223,6 +224,23 @@ class BudgetAI:
         if pinned:
             import sys
             print(f"[BudgetAI] Pinned categories received: {pinned}", file=sys.stderr)
+
+        pinned_needs_total = sum(
+            amt for cat, amt in pinned.items()
+            if cat in self.NEEDS_LABELS or cat in self.FIXED_CATEGORIES
+        )
+
+        # ── Last month exceeded categories → add warning notes ───────────────
+        exceeded_last_month = exceeded_last_month or []
+        if exceeded_last_month:
+            exceeded_str = ", ".join(
+                f"{e['category']} (over by ৳{e['exceededBy']:,})"
+                for e in exceeded_last_month
+            )
+            notes.append(
+                f"⚠️ Last month you exceeded budget in: {exceeded_str}. "
+                "AI has adjusted next month's allocations based on your actual spending."
+            )
 
         # ── Count data months ─────────────────────────────────────────────────
         df = pd.DataFrame(transaction_history)
@@ -293,28 +311,26 @@ class BudgetAI:
 
         # Reserve pinned amounts from spending cap first
         # If pinned total exceeds cap → expand cap to fit pinned + a minimum AI share
-        MIN_AI_SHARE = spending_cap * 0.20  # always leave at least 20% of original cap for AI
+        MIN_AI_SHARE  = spending_cap * 0.20
         remaining_cap = spending_cap - pinned_total
 
         if remaining_cap < 0:
-            # Pinned alone exceeds cap — expand cap to pinned + minimum AI share
-            expanded_cap = pinned_total + MIN_AI_SHARE
-            actual_savings = monthly_income - expanded_cap if monthly_income else 0
+            # Pinned exceeds cap — expand spending_cap to fit pinned + AI share
+            spending_cap  = pinned_total + MIN_AI_SHARE
+            remaining_cap = MIN_AI_SHARE
+            actual_savings = (monthly_income - spending_cap) if monthly_income else 0
             notes.append(
-                f"⚠️ Your pinned budgets (৳{int(pinned_total):,}) exceed your "
-                f"৳{int(spending_cap):,} spending cap. "
-                f"Cap expanded to ৳{int(expanded_cap):,} to accommodate them. "
-                f"Savings adjusted to ৳{int(actual_savings):,}."
+                f"⚠️ Your manually set budgets (৳{int(pinned_total):,}) exceed your "
+                f"original spending cap. Cap expanded to ৳{int(spending_cap):,}. "
+                f"Savings adjusted to ৳{int(max(0, actual_savings)):,}."
             )
             if actual_savings < 0:
                 notes.append(
-                    f"⚠️ Your pinned budgets exceed your income by ৳{int(abs(actual_savings)):,}. "
-                    "Consider reducing your manual budget amounts."
+                    f"⚠️ Your manual budgets exceed your income by ৳{int(abs(actual_savings)):,}. "
+                    "Consider reducing some manual budget amounts."
                 )
             savings = max(0.0, actual_savings)
-            remaining_cap = MIN_AI_SHARE
         elif remaining_cap < spending_cap * 0.10:
-            # Pinned leaves very little room for AI — warn but continue
             notes.append(
                 f"Your pinned budgets (৳{int(pinned_total):,}) leave only "
                 f"৳{int(remaining_cap):,} for AI categories."
