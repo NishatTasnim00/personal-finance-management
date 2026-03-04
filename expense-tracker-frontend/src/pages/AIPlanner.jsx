@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import api from "@/lib/api";
-import { Brain, Shield, ShoppingBag, AlertCircle, Calendar, Check, Save, X } from "lucide-react";
+import { Brain, Shield, ShoppingBag, AlertCircle, Calendar, Check, Save, X, Wallet } from "lucide-react";
 import { toastSuccess, toastError} from '@/lib/toast'
 import { useAcceptBudgetPlan, useDeleteBudgetPlan } from "@/hooks/budget";
 
@@ -11,10 +11,23 @@ const AIPlanner = () => {
   const [plan, setPlan] = useState(null);
   const [error, setError] = useState(null);
   const [totalBudget, setTotalBudget] = useState("");
+  const [profileIncome, setProfileIncome] = useState(null);
   const acceptMutation = useAcceptBudgetPlan();
   const deleteMutation = useDeleteBudgetPlan();
   const accepting = acceptMutation.isPending;
   const deleting = deleteMutation.isPending;
+
+  useEffect(() => {
+    const fetchIncome = async () => {
+      try {
+        const { result } = await api.get("/user/profile");
+        setProfileIncome(result?.monthlyIncome || null);
+      } catch (err) {
+        console.error("Failed to load monthly income", err);
+      }
+    };
+    fetchIncome();
+  }, []);
 
   const fetchPlan = useCallback(async () => {
     setFetching(true);
@@ -26,7 +39,6 @@ const AIPlanner = () => {
         setPlan(res.plan);
       }
     } catch (err) {
-      // 404 is expected if no plan exists
       if (err.response?.status !== 404) {
         console.error(err);
       }
@@ -101,19 +113,35 @@ const AIPlanner = () => {
         <div className="card bg-base-100 shadow-xl animate-fade-in">
             <div className="card-body">
                 <h2 className="card-title mb-4">Plan for {selectedMonth}</h2>
+                {profileIncome && (     
+                    <p className="label-text text-base-content/60">Monthly Income (from profile):
+                    <span className="font-bold text-success">৳{profileIncome.toLocaleString()}</span>
+                    </p>
+                    )}
                 <div className="flex flex-col md:flex-row gap-4 items-end flex-wrap">
                     <div className="form-control w-full max-w-xs">
-                        <label className="label">
-                            <span className="label-text">Optional: Set a Max Budget Limit</span>
+                        <label className="label mb-2">
+                            <span className="label-text font-medium">Optional: Set a Max Budget Limit</span>
+                            <span className="label-text-alt text-base-content/50">Leave blank to use 80% of income</span>
                         </label>
                         <input 
                             type="number" 
-                            placeholder="e.g. 30000" 
+                            placeholder={profileIncome ? `e.g. ${Math.round(profileIncome * 0.8).toLocaleString()}` : "e.g. 30000"}
                             className="input input-bordered w-full max-w-xs" 
                             value={totalBudget}
                             onChange={(e) => setTotalBudget(e.target.value)}
                         />
+                        {profileIncome && totalBudget && (
+                          <label className="label">
+                            <span className={`label-text-alt ${Number(totalBudget) > profileIncome ? "text-error" : "text-base-content/50"}`}>
+                              {Number(totalBudget) > profileIncome
+                                ? "⚠️ Exceeds your monthly income"
+                                : `Savings: ৳${(profileIncome - Number(totalBudget)).toLocaleString()}`}
+                            </span>
+                          </label>
+                        )}
                     </div>
+
                     <button 
                         className="btn btn-primary"
                         onClick={generatePlan}
@@ -176,20 +204,20 @@ const AIPlanner = () => {
                 <div className="stats shadow">
                     <div className="stat">
                         <div className="stat-title">Monthly Income</div>
-                        <div className="stat-value text-success">৳{plan.monthlyIncome.toLocaleString()}</div>
+                        <div className="stat-value text-success">৳{(plan.monthlyIncome ?? 0).toLocaleString()}</div>
                     </div>
                 </div>
                 <div className="stats shadow">
                     <div className="stat">
                         <div className="stat-title">Recommended Savings</div>
-                        <div className="stat-value text-primary">৳{plan.recommendedSavings.toLocaleString()}</div>
+                        <div className="stat-value text-primary">৳{(plan.recommendedSavings ?? 0).toLocaleString()}</div>
                         <div className="stat-desc">20% of income + (Target)</div>
                     </div>
                 </div>
                 <div className="stats shadow">
                     <div className="stat">
                         <div className="stat-title">Living Budget</div>
-                        <div className="stat-value text-secondary">৳{plan.totalLivingBudget.toLocaleString()}</div>
+                        <div className="stat-value text-secondary">৳{(plan.totalLivingBudget ?? 0).toLocaleString()}</div>
                         <div className="stat-desc">Needs + Wants</div>
                     </div>
                 </div>
@@ -202,7 +230,7 @@ const AIPlanner = () => {
                         <h3 className="card-title flex items-center gap-2 text-blue-600">
                             <Shield className="w-6 h-6" />
                             Needs (Essentials)
-                            <span className="ml-auto text-sm font-normal text-base-content/60">Target: ৳{plan.needsTotal.toLocaleString()}</span>
+                            <span className="ml-auto text-sm font-normal text-base-content/60">Target: ৳{(plan.needsTotal ?? 0).toLocaleString()}</span>
                         </h3>
                         <div className="divider my-1"></div>
                         <div className="space-y-3">
@@ -225,7 +253,7 @@ const AIPlanner = () => {
                         <h3 className="card-title flex items-center gap-2 text-pink-600">
                             <ShoppingBag className="w-6 h-6" />
                             Wants (Lifestyle)
-                            <span className="ml-auto text-sm font-normal text-base-content/60">Target: ৳{plan.wantsTotal.toLocaleString()}</span>
+                            <span className="ml-auto text-sm font-normal text-base-content/60">Target: ৳{(plan.wantsTotal ?? 0).toLocaleString()}</span>
                         </h3>
                          <div className="divider my-1"></div>
                         <div className="space-y-3">
