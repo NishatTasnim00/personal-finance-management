@@ -33,9 +33,10 @@ def main():
         print(json.dumps({"error": f"Failed to parse input: {str(e)}"}))
         sys.exit(1)
 
-    transactions  = input_data.get("transactions", [])
-    monthly_income = input_data.get("monthly_income")
-    total_budget   = input_data.get("total_budget")  # optional
+    transactions     = input_data.get("transactions", [])
+    monthly_income   = input_data.get("monthly_income")
+    total_budget     = input_data.get("total_budget")       # optional
+    pinned_categories = input_data.get("pinned_categories", {})  # { "Transportation": 500, ... }
 
     try:
         ai = BudgetAI()
@@ -43,6 +44,7 @@ def main():
             transaction_history=transactions,
             monthly_income=float(monthly_income) if monthly_income else None,
             total_budget=float(total_budget) if total_budget else None,
+            pinned_categories={k: float(v) for k, v in pinned_categories.items()},
         )
         print(json.dumps(result, default=convert))
     except Exception as e:
@@ -52,3 +54,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

@@ -25,82 +25,73 @@ class KeywordCategorizer:
     Falls back to keyword matching on description text.
     """
 
-    # App DB values → normalized to a single canonical value
-    # Maps variations/aliases back to the exact defaultExpenseTypes values
-    # so budget keys always match what the expense form saves
+    # App DB value → standardized label
     CATEGORY_MAP = {
-        "rent":          "rent",
-        "bills":         "bills",
-        "phone":         "bills",       # phone → bills (both are utilities)
-        "groceries":     "groceries",
-        "health":        "health",
-        "education":     "education",
-        "transport":     "transport",
-        "food":          "food",        # legacy - maps to groceries context
-        "dining":        "dining",      # Dining Out - restaurant/delivery (want)
-        "entertainment": "entertainment",
-        "shopping":      "shopping",
-        "travel":        "travel",
-        "fitness":       "fitness",
-        "other":         "other",
+        "rent":          "House Rent",
+        "bills":         "Utilities",
+        "phone":         "Utilities",
+        "groceries":     "Groceries",
+        "health":        "Healthcare",
+        "education":     "Education",
+        "transport":     "Transportation",
+        "food":          "Dining Out",
+        "entertainment": "Entertainment",
+        "shopping":      "Shopping",
+        "travel":        "Travel",
+        "fitness":       "Health and Fitness",
+        "other":         "Miscellaneous",
     }
 
-    # Keyword fallback for description text → maps to defaultExpenseTypes raw values
+    # Keyword fallback: (keywords, label)
     KEYWORD_MAP = [
-        (["rent", "house", "flat", "bari", "basa", "apartment", "mortgage", "emi", "loan", "installment"], "rent"),
-        (["groceries", "grocery", "bazar", "shwapno", "meena", "supermarket", "vegetable", "rice", "fish", "meat"], "groceries"),
-        (["electricity", "wasa", "water", "gas", "internet", "wifi", "broadband", "utility", "utilities", "bill", "bills"], "bills"),
-        (["phone", "mobile", "recharge", "airtel", "robi", "grameenphone", "gp", "banglalink"], "bills"),
-        (["school", "college", "university", "tuition", "tution", "coach", "education", "books"], "education"),
-        (["doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"], "health"),
-        (["bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro", "transport"], "transport"),
-        (["restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "fast food", "kfc", "pizza", "delivery"], "dining"),
-        (["netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "entertainment", "subscription"], "entertainment"),
-        (["daraz", "clothing", "fashion", "shoes", "bag", "accessories", "shopping"], "shopping"),
-        (["travel", "hotel", "flight", "trip", "vacation", "tour"], "travel"),
-        (["gym", "fitness", "yoga", "sport", "workout"], "fitness"),
+        (["rent", "house", "flat", "bari", "basa", "apartment", "mortgage", "emi", "loan", "installment"], "House Rent"),
+        (["groceries", "grocery", "bazar", "shwapno", "meena", "supermarket", "vegetable", "rice", "fish", "meat"], "Groceries"),
+        (["electricity", "wasa", "water", "gas", "internet", "wifi", "broadband", "utility", "utilities", "bill", "bills"], "Utilities"),
+        (["phone", "mobile", "recharge", "airtel", "robi", "grameenphone", "gp", "banglalink"], "Utilities"),
+        (["school", "college", "university", "tuition", "tution", "coach", "education", "books"], "Education"),
+        (["doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"], "Healthcare"),
+        (["bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro", "transport"], "Transportation"),
+        (["restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "fast food", "kfc", "pizza"], "Dining Out"),
+        (["netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "entertainment", "subscription"], "Entertainment"),
+        (["daraz", "clothing", "fashion", "shoes", "bag", "accessories", "shopping"], "Shopping"),
+        (["travel", "hotel", "flight", "trip", "vacation", "tour"], "Travel"),
+        (["gym", "fitness", "yoga", "sport", "workout"], "Health and Fitness"),
     ]
 
     def predict(self, category: str, description: str = "") -> str:
-        # 1. Direct category value match — app always stores clean lowercase values
+        # 1. Direct category value match (most reliable - app stores clean values)
         if category:
             clean = str(category).strip().lower()
             if clean in self.CATEGORY_MAP:
                 return self.CATEGORY_MAP[clean]
 
-        # 2. Keyword fallback on description text
+        # 2. Keyword match on combined category + description text
         text = f"{category} {description}".lower()
         for keywords, label in self.KEYWORD_MAP:
             if any(kw in text for kw in keywords):
                 return label
 
-        return "other"
+        return "Miscellaneous"
 
 
 # ── BudgetAI ──────────────────────────────────────────────────────────────────
 class BudgetAI:
 
     # Categories that are non-negotiable (never scale down below historical)
-    # Uses exact defaultExpenseTypes values so budget keys match expense categories
-    FIXED_CATEGORIES = {"rent"}
+    FIXED_CATEGORIES = {"House Rent", "EMI/Loan/Insurance", "Rent"}
 
     NEEDS_LABELS = {
-        "rent",        # Rent/Mortgage
-        "bills",       # Bills & Utilities (includes phone/internet)
-        "groceries",   # Groceries
-        "health",      # Healthcare
-        "education",   # Education
-        "transport",   # Transport
-        "fitness",     # Fitness (recurring health cost)
+        "House Rent", "Rent", "Utilities", "Groceries",
+        "EMI/Loan/Insurance", "Debt", "Transportation",
+        "Loan EMI", "Education", "Health and Fitness",
+        "Utility", "Healthcare", "Bills",
     }
 
     WANTS_LABELS = {
-        "food",          # legacy food category → treat as want if not groceries
-        "dining",        # Dining Out — restaurants, food delivery (want)
-        "shopping",      # Shopping
-        "entertainment", # Entertainment
-        "travel",        # Travel
-        "other",         # Other / Miscellaneous
+        "Dining Out", "Shopping", "Subscriptions", "Entertainment",
+        "Food Delivery", "Personal Care", "Gifts", "Clothing",
+        "Food & Drinks", "Travel", "Movies", "Coffee",
+        "Miscellaneous",  # catch-all → wants, not needs
     }
 
     def __init__(self):
@@ -211,6 +202,7 @@ class BudgetAI:
         transaction_history: list,
         monthly_income: float = None,
         total_budget: float = None,
+        pinned_categories: dict = None,
     ) -> dict:
         """
         Builds a personalized monthly budget.
@@ -219,10 +211,18 @@ class BudgetAI:
             transaction_history: list of expense dicts from DB
             monthly_income:      user's monthly income (optional)
             total_budget:        user's custom spending cap (optional)
+            pinned_categories:   manually set budgets e.g. {"Transportation": 500}
+                                 AI uses these exact amounts and redistributes
+                                 the remaining cap across other categories.
 
         Returns dict matching aiController.js + BudgetPlan schema.
         """
         notes = []
+        pinned = {k: float(v) for k, v in (pinned_categories or {}).items()}
+        pinned_total = sum(pinned.values())
+        if pinned:
+            import sys
+            print(f"[BudgetAI] Pinned categories received: {pinned}", file=sys.stderr)
 
         # ── Count data months ─────────────────────────────────────────────────
         df = pd.DataFrame(transaction_history)
@@ -279,16 +279,63 @@ class BudgetAI:
                     "Keep tracking for a fully personalized plan!"
                 )
 
-        # ── Step 1: Fixed needs at full historical amount ─────────────────────
+        # ── Step 1: Pin user-defined manual budgets ──────────────────────────
+        # These amounts are locked in — AI redistributes remaining cap around them
         needs_breakdown: dict = {}
+        wants_breakdown: dict = {}
         fixed_allocated = 0.0
 
+        if pinned:
+            notes.append(
+                f"You manually set {len(pinned)} categor{'y' if len(pinned)==1 else 'ies'} — "
+                "AI has redistributed the remaining budget around your choices."
+            )
+
+        # Reserve pinned amounts from spending cap first
+        # If pinned total exceeds cap → expand cap to fit pinned + a minimum AI share
+        MIN_AI_SHARE = spending_cap * 0.20  # always leave at least 20% of original cap for AI
+        remaining_cap = spending_cap - pinned_total
+
+        if remaining_cap < 0:
+            # Pinned alone exceeds cap — expand cap to pinned + minimum AI share
+            expanded_cap = pinned_total + MIN_AI_SHARE
+            actual_savings = monthly_income - expanded_cap if monthly_income else 0
+            notes.append(
+                f"⚠️ Your pinned budgets (৳{int(pinned_total):,}) exceed your "
+                f"৳{int(spending_cap):,} spending cap. "
+                f"Cap expanded to ৳{int(expanded_cap):,} to accommodate them. "
+                f"Savings adjusted to ৳{int(actual_savings):,}."
+            )
+            if actual_savings < 0:
+                notes.append(
+                    f"⚠️ Your pinned budgets exceed your income by ৳{int(abs(actual_savings)):,}. "
+                    "Consider reducing your manual budget amounts."
+                )
+            savings = max(0.0, actual_savings)
+            remaining_cap = MIN_AI_SHARE
+        elif remaining_cap < spending_cap * 0.10:
+            # Pinned leaves very little room for AI — warn but continue
+            notes.append(
+                f"Your pinned budgets (৳{int(pinned_total):,}) leave only "
+                f"৳{int(remaining_cap):,} for AI categories."
+            )
+
+        # Place pinned amounts into the correct breakdown bucket
+        for cat, amt in pinned.items():
+            if cat in self.NEEDS_LABELS or cat in self.FIXED_CATEGORIES:
+                needs_breakdown[cat] = round(amt)
+            else:
+                wants_breakdown[cat] = round(amt)
+
+        # ── Step 2: Fixed needs at full historical amount (non-pinned) ────────
         for cat in needs_categories:
+            if cat in pinned:
+                continue  # already pinned
             amt = base_prediction.get(cat, 0)
             if amt <= 0:
                 continue
             if cat in self.FIXED_CATEGORIES:
-                allocated = min(float(amt), spending_cap)
+                allocated = min(float(amt), remaining_cap)
                 needs_breakdown[cat] = round(allocated)
                 fixed_allocated += allocated
 
@@ -337,22 +384,22 @@ class BudgetAI:
             notes.append("No expense history — using standard starter allocation.")
             avail_needs = min(needs_cap, spending_cap - sum(wants_breakdown.values()))
             needs_breakdown = {
-                "rent":       int(avail_needs * 0.40),
-                "groceries":  int(avail_needs * 0.25),
-                "bills":      int(avail_needs * 0.15),
-                "transport":  int(avail_needs * 0.12),
-                "health":     int(avail_needs * 0.08),
+                "House Rent":           int(avail_needs * 0.40),
+                "Groceries":            int(avail_needs * 0.25),
+                "Utilities & Bills":    int(avail_needs * 0.15),
+                "Transportation":       int(avail_needs * 0.12),
+                "Healthcare":           int(avail_needs * 0.08),
             }
 
         if not wants_breakdown:
             notes.append("No discretionary history — using standard starter allocation.")
             avail_wants = min(wants_cap, max(0.0, spending_cap - sum(needs_breakdown.values())))
             wants_breakdown = {
-                "dining":        int(avail_wants * 0.35),
-                "entertainment": int(avail_wants * 0.25),
-                "shopping":      int(avail_wants * 0.25),
-                "travel":        int(avail_wants * 0.10),
-                "other":         int(avail_wants * 0.05),
+                "Dining Out & Food Delivery":    int(avail_wants * 0.30),
+                "Entertainment & Subscriptions": int(avail_wants * 0.25),
+                "Shopping & Personal Care":      int(avail_wants * 0.20),
+                "Travel & Leisure":              int(avail_wants * 0.15),
+                "Miscellaneous":                 int(avail_wants * 0.10),
             }
 
         # ── Hard cap: guarantee total ≤ spending_cap ─────────────────────────
@@ -399,3 +446,4 @@ class BudgetAI:
             "using_503020":        use_503020,
             "data_months":         num_months,
         }
+    
