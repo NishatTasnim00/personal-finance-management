@@ -23,10 +23,6 @@ import {
   Dumbbell,
   MoreHorizontal,
   Shield,
-  Heart,
-  Sunset,
-  icons,
-  Hospital
 } from "lucide-react";
 
 export const currencyOptions = [
