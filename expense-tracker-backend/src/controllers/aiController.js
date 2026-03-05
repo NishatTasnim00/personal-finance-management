@@ -150,10 +150,10 @@ export const generateBudgetPlan = async (req, res) => {
     console.log("Manual budgets found for pinning:", manualBudgets.map(b => `${b.category}=৳${b.amount}`));
 
     // Build pinned categories — same DB raw values, no mapping needed
-    const pinned_categories = {};
-    for (const b of manualBudgets) {
-      pinned_categories[b.category.toLowerCase()] = b.amount;
-    }
+    // const pinned_categories = {};
+    // for (const b of manualBudgets) {
+    //   pinned_categories[b.category.toLowerCase()] = b.amount;
+    // }
 
     // Check last month's budgets for exceeded categories
     const lastMonthDate = new Date(planYear, planMon - 2, 1);
@@ -188,7 +188,7 @@ export const generateBudgetPlan = async (req, res) => {
       transactions,
       monthly_income: Number(calculatedIncome) || 50000,
       total_budget: totalBudget ? Number(totalBudget) : null,
-      pinned_categories,
+      // pinned_categories,
       exceeded_last_month: exceededCategories,
     };
 
