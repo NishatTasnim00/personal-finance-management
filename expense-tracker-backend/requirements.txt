@@ -1,0 +1,16 @@
+# MongoDB connection
+pymongo[srv]          # Required to connect with MongoDB Atlas
+
+# Date/time handling
+python-dateutil        # Advanced datetime parsing and manipulation
+pytz                  # Timezone support
+
+# Optional: Data handling & analysis
+pandas                # For data frames and tabular data
+numpy                 # For numerical operations
+scikit-learn
+statsmodels
+pmdarima
+
+# source .venv/bin/activate
+# pip install -r requirements.txt
