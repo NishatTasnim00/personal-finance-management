@@ -25,6 +25,8 @@ import {
   Shield,
   Heart,
   Sunset,
+  icons,
+  Hospital
 } from "lucide-react";
 
 export const currencyOptions = [
@@ -52,7 +54,7 @@ export const defaultIncomeSources = [
 ];
 
 export const defaultExpenseTypes = [
-  { name: "Dining Out", value: "dining", icon: UtensilsCrossed, color: "#F59E0B" },
+  { name: "Dining Out", value: "dining out", icon: UtensilsCrossed, color: "#F59E0B" },
   { name: "Transport", value: "transport", icon: Car, color: "#3B82F6" },
   { name: "Shopping", value: "shopping", icon: ShoppingBag, color: "#EC4899" },
   {
@@ -75,13 +77,25 @@ export const defaultExpenseTypes = [
     color: "#6366F1",
   },
   { name: "Rent/Mortgage", value: "rent", icon: Home, color: "#F97316" },
-  { name: "Groceries", value: "groceries", icon: Coffee, color: "#D97706" },
+  { name: "Food and Groceries", value: "food and groceries", icon: Coffee, color: "#D97706" },
   { name: "Travel", value: "travel", icon: Plane, color: "#06B6D4" },
   {
     name: "Phone & Internet",
     value: "phone",
     icon: Smartphone,
     color: "#8B5CF6",
+  },
+  {
+    name: "EMI & Insurance",
+    value: "emi & insurance",
+    icon: Shield,
+    color: "#F43F5E",
+  },
+  {
+    name: 'Health Care',
+    value: 'health',
+    icons: 'Hospital',
+    color: "#6366F1",
   },
   { name: "Fitness", value: "fitness", icon: Dumbbell, color: "#EC4899" },
   { name: "Other", value: "other", icon: MoreHorizontal, color: "#6B7280" },

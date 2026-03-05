@@ -36,8 +36,7 @@ def main():
     transactions     = input_data.get("transactions", [])
     monthly_income   = input_data.get("monthly_income")
     total_budget     = input_data.get("total_budget")       # optional
-    pinned_categories    = input_data.get("pinned_categories", {})
-    exceeded_last_month  = input_data.get("exceeded_last_month", [])
+    exceeded_last_month = input_data.get("exceeded_last_month", [])
 
     try:
         ai = BudgetAI()
@@ -45,7 +44,6 @@ def main():
             transaction_history=transactions,
             monthly_income=float(monthly_income) if monthly_income else None,
             total_budget=float(total_budget) if total_budget else None,
-            pinned_categories={k: float(v) for k, v in pinned_categories.items()},
             exceeded_last_month=exceeded_last_month,
         )
         print(json.dumps(result, default=convert))

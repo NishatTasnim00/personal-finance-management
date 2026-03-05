@@ -149,20 +149,10 @@ export const generateBudgetPlan = async (req, res) => {
 
     console.log("Manual budgets found for pinning:", manualBudgets.map(b => `${b.category}=৳${b.amount}`));
 
-    // Map category (db raw value) → AI label → pinned amount
-    // We use the categorizer label so Python can match it to its breakdown keys
-    const categoryToLabel = {
-      rent: "House Rent", bills: "Utilities", phone: "Utilities",
-      groceries: "Groceries", health: "Healthcare", education: "Education",
-      transport: "Transportation", food: "Dining Out", entertainment: "Entertainment",
-      shopping: "Shopping", travel: "Travel", fitness: "Health and Fitness",
-      other: "Miscellaneous",
-    };
-
+    // Build pinned categories — same DB raw values, no mapping needed
     const pinned_categories = {};
     for (const b of manualBudgets) {
-      const label = categoryToLabel[b.category.toLowerCase()] || b.category;
-      pinned_categories[label] = b.amount;
+      pinned_categories[b.category.toLowerCase()] = b.amount;
     }
 
     // Check last month's budgets for exceeded categories
@@ -185,9 +175,8 @@ export const generateBudgetPlan = async (req, res) => {
       ]);
       const spent = spentResult[0]?.total || 0;
       if (spent > b.amount) {
-        const categoryLabel = categoryToLabel[b.category] || b.category;
         exceededCategories.push({
-          category: categoryLabel,
+          category: b.category,
           budget: b.amount,
           spent: Math.round(spent),
           exceededBy: Math.round(spent - b.amount),
@@ -255,42 +244,26 @@ export const acceptBudgetPlan = async (req, res) => {
     const startDate = new Date(planYear, planMon - 1, 1);
     const endDate   = new Date(planYear, planMon, 0, 23, 59, 59, 999);
 
-    // Map AI labels → DB raw category values
-    const labelToDbCategory = {
-      "house rent": "rent", "transportation": "transport", "utilities": "bills",
-      "groceries": "groceries", "healthcare": "health", "education": "education",
-      "dining out": "food", "entertainment": "entertainment", "shopping": "shopping",
-      "travel": "travel", "health and fitness": "fitness", "miscellaneous": "other",
-    };
-
     // AI plan always wins — delete ALL existing budgets for these categories
-    const planCategoryKeys = Object.keys(allCategories).map(c => {
-      const lower = c.toLowerCase();
-      return labelToDbCategory[lower] || lower;
-    });
-    console.log("Deleting budgets for categories:", planCategoryKeys);
+    const planCategoryKeys = Object.keys(allCategories).map(c => c.toLowerCase());
     const deleteResult = await Budget.deleteMany({
       userId,
       category: { $in: planCategoryKeys },
     });
-    console.log("Deleted count:", deleteResult.deletedCount);
+    console.log("Deleted budgets:", deleteResult.deletedCount, "for categories:", planCategoryKeys);
 
-    // Insert fresh AI budgets for all categories using DB raw keys
+    // Insert fresh AI budgets — categories already use DB raw values
     await Budget.insertMany(
-      Object.entries(allCategories).map(([category, amount]) => {
-        const lower = category.toLowerCase();
-        const dbCategory = labelToDbCategory[lower] || lower;
-        return {
-          userId,
-          category: dbCategory,
-          amount,
-          period: "monthly",
-          startDate,
-          endDate,
-          aiPlanId: plan._id,
-          isAIGenerated: true,
-        };
-      })
+      Object.entries(allCategories).map(([category, amount]) => ({
+        userId,
+        category: category.toLowerCase(),
+        amount,
+        period: "monthly",
+        startDate,
+        endDate,
+        aiPlanId: plan._id,
+        isAIGenerated: true,
+      }))
     );
 
     plan.isAccepted = true;

@@ -17,7 +17,7 @@ class KeywordCategorizer:
         "rent":          "House Rent",
         "bills":         "Utilities",
         "phone":         "Utilities",
-        "groceries":     "Groceries",
+        "food and groceries":     "food and groceries",
         "health":        "Healthcare",
         "education":     "Education",
         "transport":     "Transportation",
@@ -31,7 +31,7 @@ class KeywordCategorizer:
 
     KEYWORD_MAP = [
         (["rent", "house", "flat", "bari", "basa", "apartment", "mortgage", "emi", "loan", "installment"], "House Rent"),
-        (["groceries", "grocery", "bazar", "shwapno", "meena", "supermarket", "vegetable", "rice", "fish", "meat"], "Groceries"),
+        (["food and groceries", "grocery", "bazar", "shwapno", "meena", "supermarket", "vegetable", "rice", "fish", "meat"], "food and groceries"),
         (["electricity", "wasa", "water", "gas", "internet", "wifi", "broadband", "utility", "utilities", "bill", "bills"], "Utilities"),
         (["phone", "mobile", "recharge", "airtel", "robi", "grameenphone", "gp", "banglalink"], "Utilities"),
         (["school", "college", "university", "tuition", "tution", "coach", "education", "books"], "Education"),
@@ -67,7 +67,7 @@ class BudgetAI:
         self.mandatory_labels = [
             "Rent",
             "Utilities",
-            "Groceries",
+            "food and groceries",
             "EMI/Loan/Insurance",
             "Debt",
             "Transportation",
@@ -303,7 +303,7 @@ class BudgetAI:
             note.append("No past expenses detected — using standard starter Needs allocation.")
             needs_breakdown = {
                 "House Rent":            int(needs_cap * 0.40),
-                "Groceries":             int(needs_cap * 0.25),
+                "food and groceries":             int(needs_cap * 0.25),
                 "Utilities & Bills":     int(needs_cap * 0.15),
                 "Transportation":        int(needs_cap * 0.10),
                 "Healthcare/Insurance":  int(needs_cap * 0.10),

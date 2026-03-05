@@ -9,7 +9,7 @@ class LLMCategorizer:
         self.model = model
         self.categories = [
             "Transportation",
-            "Groceries",
+            "food and groceries",
             "Food & Drinks",
             "Bills",
             "Subscription",
@@ -32,7 +32,7 @@ Categorize the transaction description into exactly ONE of these categories:
 
 Rules:
 - Dining out: Restaurants, coffee, snacks, food delivery, food panda, chocolate, juice, etc.
-- Groceries: Supermarket items like vegetables, milk, rice, oil.
+- food and groceries: Supermarket items like vegetables, milk, rice, oil.
 - Transportation: Uber, Ola, bus, petrol, auto, taxi.
 - Rent: House rent, hostel (e.g., 'basa vara' means home rent in Bengali).
 - Gifts: Anything with gift, birthday, festival.

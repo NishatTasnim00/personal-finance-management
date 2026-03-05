@@ -1,156 +1,88 @@
 """
 budget_planner.py
-Core budget intelligence. Uses keyword-based categorization (no Ollama needed)
-and SARIMA/linear regression to predict next month's spending per category.
+Core budget intelligence. Uses DB raw category values throughout.
+
+Exact DB category values (from helper.js):
+  rent, bills, food and groceries, health, education, transport,
+  phone (→ treated as bills), emi & insurance,
+  dining out, entertainment, shopping, travel, fitness, other
 
 Allocation logic:
-  1. Fixed needs (Rent, EMI) → full historical amount first
-  2. Remaining → split between variable needs and wants
-     - No custom budget: 50/30/20 rule (needs 62.5%, wants 37.5% of spending cap)
-     - Custom budget:    60% needs, 40% wants of spending cap
-  3. Hard cap ensures total never exceeds spending_cap
+  1. Determine spending cap and needs/wants buckets (50/30/20 or custom 60/40)
+  2. Fixed categories (rent, emi & insurance) deducted from needs bucket first
+  3. Remaining needs bucket split among variable needs proportionally
+  4. Wants bucket split among wants proportionally
+  5. Hard cap trim — total never exceeds spending_cap
 """
 
+import sys
 import pandas as pd
 import numpy as np
-from models.linear_trend import MonthlyTrendRegressor
 from models.sarima_trend import MonthlySARIMATrendRegressor
 
 
-# ── Keyword-based categorizer ─────────────────────────────────────────────────
+# ── Category definitions — exact DB raw values ───────────────────────────────
+
+FIXED_CATEGORIES = {"rent", "emi & insurance"}          # never scale down
+
+NEEDS_CATEGORIES = {"rent", "emi & insurance", "bills",
+                    "food and groceries", "health",
+                    "education", "transport", "fitness"}  # essentials
+
+WANTS_CATEGORIES = {"dining out", "entertainment",
+                    "shopping", "travel", "other"}        # discretionary
+
+ALL_CATEGORIES   = NEEDS_CATEGORIES | WANTS_CATEGORIES
+
+
+# ── Keyword categorizer ───────────────────────────────────────────────────────
 class KeywordCategorizer:
     """
-    Maps app category values (rent, food, bills...) to standardized labels
-    that match mandatory_labels and wants_labels in BudgetAI.
-    Falls back to keyword matching on description text.
+    Used only when a transaction has no recognized category.
+    Always returns an exact DB raw category value.
+    Note: 'phone' is a valid DB value but maps to 'bills' per business rule.
     """
-
-    # App DB value → standardized label
-    CATEGORY_MAP = {
-        "rent":          "House Rent",
-        "bills":         "Utilities",
-        "phone":         "Utilities",
-        "groceries":     "Groceries",
-        "health":        "Healthcare",
-        "education":     "Education",
-        "transport":     "Transportation",
-        "food":          "Dining Out",
-        "entertainment": "Entertainment",
-        "shopping":      "Shopping",
-        "travel":        "Travel",
-        "fitness":       "Health and Fitness",
-        "other":         "Miscellaneous",
-    }
-
-    # Keyword fallback: (keywords, label)
     KEYWORD_MAP = [
-        (["rent", "house", "flat", "bari", "basa", "apartment", "mortgage", "emi", "loan", "installment"], "House Rent"),
-        (["groceries", "grocery", "bazar", "shwapno", "meena", "supermarket", "vegetable", "rice", "fish", "meat"], "Groceries"),
-        (["electricity", "wasa", "water", "gas", "internet", "wifi", "broadband", "utility", "utilities", "bill", "bills"], "Utilities"),
-        (["phone", "mobile", "recharge", "airtel", "robi", "grameenphone", "gp", "banglalink"], "Utilities"),
-        (["school", "college", "university", "tuition", "tution", "coach", "education", "books"], "Education"),
-        (["doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"], "Healthcare"),
-        (["bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro", "transport"], "Transportation"),
-        (["restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "fast food", "kfc", "pizza"], "Dining Out"),
-        (["netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "entertainment", "subscription"], "Entertainment"),
-        (["daraz", "clothing", "fashion", "shoes", "bag", "accessories", "shopping"], "Shopping"),
-        (["travel", "hotel", "flight", "trip", "vacation", "tour"], "Travel"),
-        (["gym", "fitness", "yoga", "sport", "workout"], "Health and Fitness"),
+        ({"rent", "house", "flat", "bari", "basa", "apartment", "mortgage"}, "rent"),
+        ({"emi", "loan", "installment", "insurance"}, "emi & insurance"),
+        ({"grocery", "groceries", "bazar", "shwapno", "meena", "supermarket",
+          "vegetable", "rice", "fish", "meat"}, "food and groceries"),
+        ({"electricity", "wasa", "water", "gas", "internet", "wifi",
+          "broadband", "utility", "bill", "bills",
+          "phone", "mobile", "recharge", "airtel", "robi",
+          "grameenphone", "gp", "banglalink"}, "bills"),
+        ({"school", "college", "university", "tuition", "coach", "education", "books"}, "education"),
+        ({"doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"}, "health"),
+        ({"bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro"}, "transport"),
+        ({"restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "kfc", "pizza", "delivery"}, "dining out"),
+        ({"netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "subscription"}, "entertainment"),
+        ({"daraz", "clothing", "fashion", "shoes", "bag", "accessories"}, "shopping"),
+        ({"travel", "hotel", "flight", "trip", "vacation", "tour"}, "travel"),
+        ({"gym", "fitness", "yoga", "sport", "workout"}, "fitness"),
     ]
 
-    def predict(self, category: str, description: str = "") -> str:
-        # 1. Direct category value match (most reliable - app stores clean values)
+    def categorize(self, category: str, description: str = "") -> str:
         if category:
             clean = str(category).strip().lower()
-            if clean in self.CATEGORY_MAP:
-                return self.CATEGORY_MAP[clean]
-
-        # 2. Keyword match on combined category + description text
+            # phone → bills per business rule
+            if clean == "phone":
+                return "bills"
+            if clean in ALL_CATEGORIES:
+                return clean
+        # Keyword fallback
         text = f"{category} {description}".lower()
-        for keywords, label in self.KEYWORD_MAP:
+        for keywords, raw_value in self.KEYWORD_MAP:
             if any(kw in text for kw in keywords):
-                return label
-
-        return "Miscellaneous"
+                return raw_value
+        return "other"
 
 
 # ── BudgetAI ──────────────────────────────────────────────────────────────────
 class BudgetAI:
 
-    # Categories that are non-negotiable (never scale down below historical)
-    FIXED_CATEGORIES = {"House Rent", "EMI/Loan/Insurance", "Rent"}
-
-    NEEDS_LABELS = {
-        "House Rent", "Rent", "Utilities", "Groceries",
-        "EMI/Loan/Insurance", "Debt", "Transportation",
-        "Loan EMI", "Education", "Health and Fitness",
-        "Utility", "Healthcare", "Bills",
-    }
-
-    WANTS_LABELS = {
-        "Dining Out", "Shopping", "Subscriptions", "Entertainment",
-        "Food Delivery", "Personal Care", "Gifts", "Clothing",
-        "Food & Drinks", "Travel", "Movies", "Coffee",
-        "Miscellaneous",  # catch-all → wants, not needs
-    }
-
     def __init__(self):
         self.categorizer = KeywordCategorizer()
 
-    # ── Trend prediction ──────────────────────────────────────────────────────
-    def _predict_category_trend(self, cat_data: pd.DataFrame, category_name: str = None) -> int:
-        """
-        Predicts next month's spend for one category.
-        - Fixed categories (rent/EMI): use max of last 4 months (stable, no regression)
-        - ≤5 months data: simple mean × 1.05
-        - >5 months: SARIMA → fallback to recent mean if SARIMA fails
-        """
-        if cat_data.empty:
-            return 0
-
-        monthly = (
-            cat_data
-            .groupby(cat_data["date"].dt.tz_localize(None).dt.to_period("M"))["amount"]
-            .sum()
-            .sort_index()
-        )
-        values = monthly[monthly > 0].values
-
-        if len(values) == 0:
-            return 0
-
-        # Fixed costs: trust the recent high, no regression needed
-        if category_name in self.FIXED_CATEGORIES:
-            return round(float(np.max(values[-4:])))
-
-        # Too few data points for SARIMA
-        if len(values) <= 5:
-            return round(float(np.mean(values)) * 1.05)
-
-        # Try SARIMA
-        try:
-            reg = MonthlySARIMATrendRegressor(
-                seasonal_period=12,
-                max_pdq=3,
-                max_PDQ=2,
-                stepwise=True,
-            ).fit(values)
-
-            if reg.is_fitted:
-                pred = reg.predict_next()
-                hist_max = float(values.max())
-                pred = min(pred, hist_max * 1.25)   # cap: max 25% above historical max
-                pred = max(pred, hist_max * 0.65)   # floor: min 65% of historical max
-                return round(pred * 1.05)           # small optimism buffer
-
-            # SARIMA not fitted → fallback
-            return round(float(np.mean(values[-6:])) * 1.07)
-
-        except Exception as e:
-            print(f"SARIMA failed for {category_name}: {e}", file=__import__("sys").stderr)
-            return round(float(np.mean(values[-6:])) * 1.07)
-
-    # ── Filter to expenses only ───────────────────────────────────────────────
     def _filter_expenses(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         col_map = {c.lower(): c for c in df.columns}
@@ -160,135 +92,133 @@ class BudgetAI:
         df["amount"] = df["amount"].abs()
         return df
 
-    # ── Per-category spend predictions ───────────────────────────────────────
-    def predict_next_month_budget(self, transaction_history: list) -> dict:
+    def _predict_category(self, values: np.ndarray, category: str) -> float:
         """
-        Returns predicted spend per labeled category for next month.
+          - Fixed (rent, emi & insurance) → max of last 4 months
+          - n <= 5 months                 → mean × 1.05
+          - n >  5 months                 → SARIMA bounded [65%, 125%] of historical max
+                                            fallback: mean of last 6 months × 1.07
         """
-        df = pd.DataFrame(transaction_history)
-        if df.empty:
-            return {"breakdown": {}, "total_predicted": 0}
+        values = values[values > 0]
+        if len(values) == 0:
+            return 0.0
 
-        df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=True)
-        df = df.dropna(subset=["date", "amount", "category"])
+        if category in FIXED_CATEGORIES:
+            return float(np.max(values[-4:]))
+
+        if len(values) <= 5:
+            return float(np.mean(values)) * 1.05
+
+        try:
+            reg = MonthlySARIMATrendRegressor(
+                seasonal_period=12, max_pdq=3, max_PDQ=2, stepwise=True
+            ).fit(values)
+
+            if reg.is_fitted:
+                pred  = reg.predict_next()
+                h_max = float(values.max())
+                pred  = max(pred, h_max * 0.65)
+                pred  = min(pred, h_max * 1.25)
+                return pred * 1.05
+
+            return float(np.mean(values[-6:])) * 1.07
+
+        except Exception as e:
+            print(f"[BudgetAI] SARIMA failed for {category}: {e}", file=sys.stderr)
+            return float(np.mean(values[-6:])) * 1.07
+
+    def _predict_all(self, transactions: list) -> dict:
+        """Returns { db_category: predicted_amount } for next month."""
+        df = pd.DataFrame(transactions)
+        if df.empty:
+            return {}
+
+        df["date"]   = pd.to_datetime(df["date"], errors="coerce", utc=True)
+        df           = df.dropna(subset=["date", "amount", "category"])
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
-        df = self._filter_expenses(df)
-
+        df           = self._filter_expenses(df)
         if df.empty:
-            return {"breakdown": {}, "total_predicted": 0}
+            return {}
 
-        df["label"] = df.apply(
-            lambda row: self.categorizer.predict(
-                row.get("category", ""),
-                row.get("description", "")
-            ),
-            axis=1,
+        df["category"] = df.apply(
+            lambda r: self.categorizer.categorize(
+                str(r.get("category", "")), str(r.get("description", ""))
+            ), axis=1,
         )
 
         predictions = {}
-        for label in df["label"].unique():
-            if not label:
-                continue
-            cat_data = df[df["label"] == label]
-            pred = self._predict_category_trend(cat_data, category_name=label)
+        for cat in df["category"].unique():
+            cat_df  = df[df["category"] == cat]
+            monthly = (
+                cat_df
+                .groupby(cat_df["date"].dt.tz_localize(None).dt.to_period("M"))["amount"]
+                .sum()
+                .sort_index()
+            )
+            pred = self._predict_category(monthly.values, cat)
             if pred > 0:
-                predictions[label] = pred
+                predictions[cat] = round(pred)
 
-        return {"breakdown": predictions, "total_predicted": sum(predictions.values())}
+        return predictions
 
-    # ── Main budget builder ───────────────────────────────────────────────────
     def create_balanced_budget(
         self,
         transaction_history: list,
-        monthly_income: float = None,
-        total_budget: float = None,
-        pinned_categories: dict = None,
-        exceeded_last_month: list = None,
+        monthly_income:      float = None,
+        total_budget:        float = None,
+        exceeded_last_month: list  = None,
     ) -> dict:
-        """
-        Builds a personalized monthly budget.
+        notes    = []
+        exceeded = exceeded_last_month or []
 
-        Args:
-            transaction_history: list of expense dicts from DB
-            monthly_income:      user's monthly income (optional)
-            total_budget:        user's custom spending cap (optional)
-            pinned_categories:   manually set budgets e.g. {"Transportation": 500}
-                                 AI uses these exact amounts and redistributes
-                                 the remaining cap across other categories.
-
-        Returns dict matching aiController.js + BudgetPlan schema.
-        """
-        notes = []
-        pinned = {k: float(v) for k, v in (pinned_categories or {}).items()}
-        pinned_total = sum(pinned.values())
-        if pinned:
-            import sys
-            print(f"[BudgetAI] Pinned categories received: {pinned}", file=sys.stderr)
-
-        pinned_needs_total = sum(
-            amt for cat, amt in pinned.items()
-            if cat in self.NEEDS_LABELS or cat in self.FIXED_CATEGORIES
-        )
-
-        # ── Last month exceeded categories → add warning notes ───────────────
-        exceeded_last_month = exceeded_last_month or []
-        if exceeded_last_month:
+        if exceeded:
             exceeded_str = ", ".join(
-                f"{e['category']} (over by ৳{e['exceededBy']:,})"
-                for e in exceeded_last_month
+                f"{e['category']} (over by ৳{int(e['exceededBy']):,})"
+                for e in exceeded
             )
             notes.append(
                 f"⚠️ Last month you exceeded budget in: {exceeded_str}. "
-                "AI has adjusted next month's allocations based on your actual spending."
+                "AI has adjusted allocations based on your actual spending."
             )
 
         # ── Count data months ─────────────────────────────────────────────────
+        num_months = 0
         df = pd.DataFrame(transaction_history)
-        if df.empty:
-            num_months = 0
-        else:
+        if not df.empty:
             df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=True)
             df = df.dropna(subset=["date"])
             df = self._filter_expenses(df)
-            if df.empty:
-                num_months = 0
-            else:
+            if not df.empty:
                 num_months = df["date"].dt.tz_localize(None).dt.to_period("M").nunique()
 
-        # ── Get predicted spend per category ─────────────────────────────────
-        base_prediction = self.predict_next_month_budget(transaction_history)["breakdown"]
+        # ── AI predictions per category ───────────────────────────────────────
+        predictions = self._predict_all(transaction_history)
 
-        # Classify predicted categories into needs / wants
-        needs_categories = [c for c in base_prediction if c in self.NEEDS_LABELS]
-        wants_categories = [c for c in base_prediction if c in self.WANTS_LABELS]
-        # Anything unclassified → treat as wants (safe default)
-        unclassified = [c for c in base_prediction if c not in self.NEEDS_LABELS and c not in self.WANTS_LABELS]
-        wants_categories += unclassified
+        pred_needs = {c: v for c, v in predictions.items() if c in NEEDS_CATEGORIES}
+        pred_wants = {c: v for c, v in predictions.items() if c in WANTS_CATEGORIES}
+        pred_wants.update({c: v for c, v in predictions.items() if c not in ALL_CATEGORIES})
 
-        # ── Spending cap & savings ────────────────────────────────────────────
-        # use_503020: True when no custom limit → 50/30/20 rule drives allocation
-        use_503020 = total_budget is None
-
+        # ── Spending cap ──────────────────────────────────────────────────────
         if total_budget is not None:
             spending_cap = float(total_budget)
-            savings = max(0.0, float(monthly_income) - spending_cap) if monthly_income else 0.0
-            needs_pct = 0.60   # 60% of cap → needs
-            wants_pct = 0.40   # 40% of cap → wants
+            savings      = max(0.0, float(monthly_income) - spending_cap) if monthly_income else 0.0
+            needs_pct    = 0.60
+            wants_pct    = 0.40
             notes.append("Custom spending limit applied — essentials protected first.")
-            if monthly_income and savings == 0:
-                notes.append("Spending limit equals or exceeds income — savings set to 0.")
+            if monthly_income and spending_cap >= float(monthly_income):
+                notes.append("Spending limit equals or exceeds income — consider reducing it.")
         else:
             if not monthly_income:
                 monthly_income = 50000.0
                 notes.append(
                     "No income provided — using ৳50,000 as default. "
-                    "Set your actual income for a personalized plan."
+                    "Set your actual income in Profile for a personalized plan."
                 )
             monthly_income = float(monthly_income)
-            spending_cap = monthly_income * 0.80
-            savings      = monthly_income * 0.20
-            needs_pct    = 0.625   # 50% of income = 62.5% of spending cap
-            wants_pct    = 0.375   # 30% of income = 37.5% of spending cap
+            spending_cap   = monthly_income * 0.80
+            savings        = monthly_income * 0.20
+            needs_pct      = 0.625
+            wants_pct      = 0.375
             if num_months >= 3:
                 notes.append("50/30/20 rule applied, personalized from your spending history.")
             else:
@@ -297,149 +227,93 @@ class BudgetAI:
                     "Keep tracking for a fully personalized plan!"
                 )
 
-        # ── Step 1: Pin user-defined manual budgets ──────────────────────────
-        # These amounts are locked in — AI redistributes remaining cap around them
+        # Split cap into buckets upfront
+        needs_cap = spending_cap * needs_pct
+        wants_cap = spending_cap * wants_pct
+
         needs_breakdown: dict = {}
         wants_breakdown: dict = {}
-        fixed_allocated = 0.0
 
-        if pinned:
+        # ── Fixed (rent + emi & insurance) — deducted from needs_cap first ────
+        fixed_total = 0.0
+        for cat in FIXED_CATEGORIES:
+            amt = pred_needs.get(cat, 0)
+            if amt > 0:
+                allocated = min(float(amt), needs_cap - fixed_total)
+                if allocated > 0:
+                    needs_breakdown[cat] = round(allocated)
+                    fixed_total += allocated
+
+        if fixed_total >= needs_cap:
             notes.append(
-                f"You manually set {len(pinned)} categor{'y' if len(pinned)==1 else 'ies'} — "
-                "AI has redistributed the remaining budget around your choices."
+                f"⚠️ Fixed essentials (rent + EMI ৳{int(fixed_total):,}) fill your entire "
+                f"needs budget (৳{int(needs_cap):,}). No room for other needs categories."
             )
-
-        # Reserve pinned amounts from spending cap first
-        # If pinned total exceeds cap → expand cap to fit pinned + a minimum AI share
-        MIN_AI_SHARE  = spending_cap * 0.20
-        remaining_cap = spending_cap - pinned_total
-
-        if remaining_cap < 0:
-            # Pinned exceeds cap — expand spending_cap to fit pinned + AI share
-            spending_cap  = pinned_total + MIN_AI_SHARE
-            remaining_cap = MIN_AI_SHARE
-            actual_savings = (monthly_income - spending_cap) if monthly_income else 0
-            notes.append(
-                f"⚠️ Your manually set budgets (৳{int(pinned_total):,}) exceed your "
-                f"original spending cap. Cap expanded to ৳{int(spending_cap):,}. "
-                f"Savings adjusted to ৳{int(max(0, actual_savings)):,}."
-            )
-            if actual_savings < 0:
-                notes.append(
-                    f"⚠️ Your manual budgets exceed your income by ৳{int(abs(actual_savings)):,}. "
-                    "Consider reducing some manual budget amounts."
-                )
-            savings = max(0.0, actual_savings)
-        elif remaining_cap < spending_cap * 0.10:
-            notes.append(
-                f"Your pinned budgets (৳{int(pinned_total):,}) leave only "
-                f"৳{int(remaining_cap):,} for AI categories."
-            )
-
-        # Place pinned amounts into the correct breakdown bucket
-        for cat, amt in pinned.items():
-            if cat in self.NEEDS_LABELS or cat in self.FIXED_CATEGORIES:
-                needs_breakdown[cat] = round(amt)
-            else:
-                wants_breakdown[cat] = round(amt)
-
-        # ── Step 2: Fixed needs at full historical amount (non-pinned) ────────
-        for cat in needs_categories:
-            if cat in pinned:
-                continue  # already pinned
-            amt = base_prediction.get(cat, 0)
-            if amt <= 0:
-                continue
-            if cat in self.FIXED_CATEGORIES:
-                allocated = min(float(amt), remaining_cap)
-                needs_breakdown[cat] = round(allocated)
-                fixed_allocated += allocated
-
-        # ── Step 2: Check if fixed alone exceeds cap ──────────────────────────
-        if fixed_allocated >= spending_cap:
-            notes.append(
-                f"⚠️ Fixed essentials (Rent/EMI: ৳{int(fixed_allocated):,}) meet or exceed "
-                f"your ৳{int(spending_cap):,} limit. No room for other categories."
-            )
-            wants_breakdown: dict = {}
-            needs_cap = fixed_allocated
-            wants_cap = 0.0
+            remaining_needs = 0.0
         else:
-            # ── Step 3: Distribute remaining after fixed ──────────────────────
-            remaining       = spending_cap - fixed_allocated
-            variable_budget = remaining * needs_pct
-            wants_cap_alloc = remaining * wants_pct
+            remaining_needs = needs_cap - fixed_total
 
-            # Variable needs (groceries, transport, utilities...) → scale to fit
-            variable_needs = {
-                c: float(base_prediction[c])
-                for c in needs_categories
-                if c not in self.FIXED_CATEGORIES and base_prediction.get(c, 0) > 0
-            }
-            variable_sum = sum(variable_needs.values()) or 1.0
-            for cat, amt in variable_needs.items():
-                needs_breakdown[cat] = round(amt * (variable_budget / variable_sum))
+        # ── Variable needs — scaled to remaining_needs ────────────────────────
+        var_needs = {
+            c: float(pred_needs[c])
+            for c in NEEDS_CATEGORIES
+            if c not in FIXED_CATEGORIES and pred_needs.get(c, 0) > 0
+        }
+        if var_needs and remaining_needs > 0:
+            var_sum = sum(var_needs.values())
+            for cat, amt in var_needs.items():
+                needs_breakdown[cat] = round(amt * (remaining_needs / var_sum))
 
-            # Wants → scale to fit
-            wants_pred = {
-                c: float(base_prediction[c])
-                for c in wants_categories
-                if base_prediction.get(c, 0) > 0
-            }
-            wants_sum = sum(wants_pred.values()) or 1.0
-            wants_breakdown = {
-                c: round(amt * (wants_cap_alloc / wants_sum))
-                for c, amt in wants_pred.items()
-            }
+        # ── Wants — scaled to wants_cap ───────────────────────────────────────
+        if pred_wants and wants_cap > 0:
+            wants_sum = sum(pred_wants.values())
+            for cat, amt in pred_wants.items():
+                wants_breakdown[cat] = round(float(amt) * (wants_cap / wants_sum))
 
-            needs_cap = fixed_allocated + variable_budget
-            wants_cap = wants_cap_alloc
-
-        # ── Fallback: no transaction data ─────────────────────────────────────
+        # ── Fallback if no transaction data ───────────────────────────────────
         if not needs_breakdown:
             notes.append("No expense history — using standard starter allocation.")
-            avail_needs = min(needs_cap, spending_cap - sum(wants_breakdown.values()))
             needs_breakdown = {
-                "House Rent":           int(avail_needs * 0.40),
-                "Groceries":            int(avail_needs * 0.25),
-                "Utilities & Bills":    int(avail_needs * 0.15),
-                "Transportation":       int(avail_needs * 0.12),
-                "Healthcare":           int(avail_needs * 0.08),
+                "rent":               round(needs_cap * 0.40),
+                "emi & insurance":    round(needs_cap * 0.10),
+                "food and groceries": round(needs_cap * 0.25),
+                "bills":              round(needs_cap * 0.15),
+                "transport":          round(needs_cap * 0.10),
             }
-
         if not wants_breakdown:
             notes.append("No discretionary history — using standard starter allocation.")
-            avail_wants = min(wants_cap, max(0.0, spending_cap - sum(needs_breakdown.values())))
             wants_breakdown = {
-                "Dining Out & Food Delivery":    int(avail_wants * 0.30),
-                "Entertainment & Subscriptions": int(avail_wants * 0.25),
-                "Shopping & Personal Care":      int(avail_wants * 0.20),
-                "Travel & Leisure":              int(avail_wants * 0.15),
-                "Miscellaneous":                 int(avail_wants * 0.10),
+                "dining out":    round(wants_cap * 0.35),
+                "entertainment": round(wants_cap * 0.25),
+                "shopping":      round(wants_cap * 0.20),
+                "travel":        round(wants_cap * 0.10),
+                "other":         round(wants_cap * 0.10),
             }
 
-        # ── Hard cap: guarantee total ≤ spending_cap ─────────────────────────
-        total_allocated = sum(needs_breakdown.values()) + sum(wants_breakdown.values())
-        if total_allocated > spending_cap:
-            overflow = total_allocated - spending_cap
-            # Trim wants largest-first
-            for w in sorted(wants_breakdown, key=lambda k: wants_breakdown[k], reverse=True):
-                trim = min(wants_breakdown[w], overflow)
-                wants_breakdown[w] = round(wants_breakdown[w] - trim)
+        # ── Hard cap trim (rounding safety) ───────────────────────────────────
+        total = sum(needs_breakdown.values()) + sum(wants_breakdown.values())
+        if total > spending_cap:
+            overflow = total - spending_cap
+            for cat in sorted(wants_breakdown, key=wants_breakdown.get, reverse=True):
+                trim = min(wants_breakdown[cat], overflow)
+                wants_breakdown[cat] = round(wants_breakdown[cat] - trim)
                 overflow -= trim
                 if overflow <= 0:
                     break
-            # If still over, trim variable needs (never fixed)
             if overflow > 0:
-                for n in sorted(needs_breakdown, key=lambda k: needs_breakdown[k], reverse=True):
-                    if n not in self.FIXED_CATEGORIES:
-                        trim = min(needs_breakdown[n], overflow)
-                        needs_breakdown[n] = round(needs_breakdown[n] - trim)
+                for cat in sorted(needs_breakdown, key=needs_breakdown.get, reverse=True):
+                    if cat not in FIXED_CATEGORIES:
+                        trim = min(needs_breakdown[cat], overflow)
+                        needs_breakdown[cat] = round(needs_breakdown[cat] - trim)
                         overflow -= trim
                         if overflow <= 0:
                             break
 
-        # ── Savings advice note ───────────────────────────────────────────────
+        # Remove zeros
+        needs_breakdown = {k: v for k, v in needs_breakdown.items() if v > 0}
+        wants_breakdown = {k: v for k, v in wants_breakdown.items() if v > 0}
+
+        # ── Savings note ──────────────────────────────────────────────────────
         savings_rate = (savings / float(monthly_income) * 100) if monthly_income else 0
         if savings_rate >= 20:
             notes.append(f"🎉 On track to save ৳{int(savings):,} ({savings_rate:.0f}%) this month!")
@@ -459,7 +333,6 @@ class BudgetAI:
             "wants_total":         int(wants_cap),
             "wants_breakdown":     wants_breakdown,
             "note":                notes,
-            "using_503020":        use_503020,
             "data_months":         num_months,
         }
     
