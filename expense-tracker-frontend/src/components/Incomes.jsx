@@ -151,7 +151,7 @@
             Download CSV
           </button>
         </div>
-        {incomes.length && (
+        {incomes.length > 0 && (
           <div className="card w-fit sm:min-w-90 font-medium bg-base-100 shadow-lg hover:shadow-xl transition-all duration-300 p-6 border border-base-100">
             <div className="mt-auto">
               <h3 className="text-3xl text-primary">Total Income</h3>

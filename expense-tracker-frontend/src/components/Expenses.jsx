@@ -264,7 +264,7 @@ const Expenses = () => {
       />
       <DeleteConfirmation
         title="Delete Expense"
-        content={`expense "${selectedExpense?.category}" of $${selectedExpense?.amount}`}
+        content={`expense "${selectedExpense?.category}" of ৳${selectedExpense?.amount}`}
         onConfirm={handleDelete}
         isLoading={deleteMutation.isPending}
       />

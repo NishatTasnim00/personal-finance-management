@@ -40,8 +40,8 @@ const FilterBar = ({
                 onClick={() => {
                   setFilter(period);
                   if (period !== "custom") {
-                    setFrom("");
-                    setTo("");
+                    setFrom(null);
+                    setTo(null);
                   }
                 }}
                 className={`btn btn-sm capitalize ${
@@ -58,7 +58,7 @@ const FilterBar = ({
 
             <button
               onClick={() => {
-                setFilter(isCustom ? "all" : "custom");
+                setFilter(isCustom ? "month" : "custom");
               }}
               className={`btn btn-sm ${
                 isCustom ? "btn-primary" : "btn-outline"
