@@ -7,11 +7,28 @@ Exact DB category values (from helper.js):
   phone (→ treated as bills), emi & insurance,
   dining out, entertainment, shopping, travel, fitness, other
 
+Prediction strategy (validated by rolling one-step-ahead evaluation):
+
+  Fixed (rent, emi & insurance)
+    → Last month value — contractually fixed, last value is ground truth
+
+  Flat/step-change variable (fitness, entertainment — CV<0.15, ≤4 unique)
+    → Last month value — barely changes month to month
+
+  Sporadic (health, education, travel, shopping)
+    → Mean of last 6 months × 1.05 — too irregular for any trend model
+
+  Regular variable (bills, food, transport, dining out, other)
+    < 6  months → Mean × 1.05
+    6–24 months → Mean of last 6 × 1.05    (Mean wins over SARIMA here)
+    25+  months → SARIMA with full seasonality (m=12)
+                  fallback → weighted mean × 1.07
+
 Allocation logic:
-  1. Determine spending cap and needs/wants buckets (50/30/20 or custom 60/40)
-  2. Fixed categories (rent, emi & insurance) deducted from needs bucket first
-  3. Remaining needs bucket split among variable needs proportionally
-  4. Wants bucket split among wants proportionally
+  1. Split income: 80% spending cap, 20% savings (50/30/20 rule)
+  2. Needs bucket (62.5% of spending cap) — fixed categories deducted first
+  3. Remaining needs split among variable needs proportionally
+  4. Wants bucket (37.5% of spending cap) split proportionally
   5. Hard cap trim — total never exceeds spending_cap
 """
 
@@ -21,26 +38,27 @@ import numpy as np
 from models.sarima_trend import MonthlySARIMATrendRegressor
 
 
-# ── Category definitions — exact DB raw values ───────────────────────────────
+# ── Category definitions ──────────────────────────────────────────────────────
 
-FIXED_CATEGORIES = {"rent", "emi & insurance"}          # never scale down
+FIXED_CATEGORIES    = {"rent", "emi & insurance"}
 
-NEEDS_CATEGORIES = {"rent", "emi & insurance", "bills",
-                    "food and groceries", "health",
-                    "education", "transport", "fitness"}  # essentials
+SPORADIC_CATEGORIES = {"health", "education", "travel", "shopping"}
 
-WANTS_CATEGORIES = {"dining out", "entertainment",
-                    "shopping", "travel", "other"}        # discretionary
+NEEDS_CATEGORIES    = {"rent", "emi & insurance", "bills",
+                       "food and groceries", "health",
+                       "education", "transport", "fitness"}
 
-ALL_CATEGORIES   = NEEDS_CATEGORIES | WANTS_CATEGORIES
+WANTS_CATEGORIES    = {"dining out", "entertainment",
+                       "shopping", "travel", "other"}
+
+ALL_CATEGORIES      = NEEDS_CATEGORIES | WANTS_CATEGORIES
 
 
 # ── Keyword categorizer ───────────────────────────────────────────────────────
 class KeywordCategorizer:
     """
-    Used only when a transaction has no recognized category.
-    Always returns an exact DB raw category value.
-    Note: 'phone' is a valid DB value but maps to 'bills' per business rule.
+    Maps raw text to exact DB category values.
+    'phone' → 'bills' per business rule.
     """
     KEYWORD_MAP = [
         ({"rent", "house", "flat", "bari", "basa", "apartment", "mortgage"}, "rent"),
@@ -51,12 +69,18 @@ class KeywordCategorizer:
           "broadband", "utility", "bill", "bills",
           "phone", "mobile", "recharge", "airtel", "robi",
           "grameenphone", "gp", "banglalink"}, "bills"),
-        ({"school", "college", "university", "tuition", "coach", "education", "books"}, "education"),
-        ({"doctor", "hospital", "pharmacy", "medicine", "clinic", "health", "labaid"}, "health"),
-        ({"bus", "train", "cng", "rickshaw", "uber", "pathao", "fuel", "petrol", "metro"}, "transport"),
-        ({"restaurant", "dining", "cafe", "coffee", "foodpanda", "shohoz", "kfc", "pizza", "delivery"}, "dining out"),
-        ({"netflix", "spotify", "youtube", "movie", "cinema", "game", "pubg", "subscription"}, "entertainment"),
-        ({"daraz", "clothing", "fashion", "shoes", "bag", "accessories"}, "shopping"),
+        ({"school", "college", "university", "tuition", "coach",
+          "education", "books"}, "education"),
+        ({"doctor", "hospital", "pharmacy", "medicine", "clinic",
+          "health", "labaid"}, "health"),
+        ({"bus", "train", "cng", "rickshaw", "uber", "pathao",
+          "fuel", "petrol", "metro"}, "transport"),
+        ({"restaurant", "dining", "cafe", "coffee", "foodpanda",
+          "shohoz", "kfc", "pizza", "delivery"}, "dining out"),
+        ({"netflix", "spotify", "youtube", "movie", "cinema",
+          "game", "pubg"}, "entertainment"),
+        ({"daraz", "clothing", "fashion", "shoes", "bag",
+          "accessories"}, "shopping"),
         ({"travel", "hotel", "flight", "trip", "vacation", "tour"}, "travel"),
         ({"gym", "fitness", "yoga", "sport", "workout"}, "fitness"),
     ]
@@ -64,12 +88,10 @@ class KeywordCategorizer:
     def categorize(self, category: str, description: str = "") -> str:
         if category:
             clean = str(category).strip().lower()
-            # phone → bills per business rule
             if clean == "phone":
                 return "bills"
             if clean in ALL_CATEGORIES:
                 return clean
-        # Keyword fallback
         text = f"{category} {description}".lower()
         for keywords, raw_value in self.KEYWORD_MAP:
             if any(kw in text for kw in keywords):
@@ -92,40 +114,111 @@ class BudgetAI:
         df["amount"] = df["amount"].abs()
         return df
 
+    @staticmethod
+    def _is_flat_or_step(values: np.ndarray) -> bool:
+        """Same logic as sarima_trend — detect flat/step series."""
+        nonzero = values[values > 0]
+        if len(nonzero) == 0:
+            return True
+        mean = np.mean(nonzero)
+        if mean == 0:
+            return True
+        cv = float(np.std(nonzero) / mean)
+        if cv < 0.02:
+            return True
+        n_unique = len(np.unique(np.round(nonzero, -2)))
+        if cv < 0.15 and n_unique <= 4:
+            return True
+        return False
+
+    @staticmethod
+    def _mean_prediction(values: np.ndarray, window: int = 6) -> float:
+        """Mean of last `window` months × 1.05 buffer."""
+        w = min(window, len(values))
+        return float(np.mean(values[-w:])) * 1.05
+
     def _predict_category(self, values: np.ndarray, category: str) -> float:
         """
-          - Fixed (rent, emi & insurance) → max of last 4 months
-          - n <= 5 months                 → mean × 1.05
-          - n >  5 months                 → SARIMA bounded [65%, 125%] of historical max
-                                            fallback: mean of last 6 months × 1.07
+        Tiered prediction validated by rolling one-step-ahead evaluation:
+
+        Fixed (rent, emi):          last month value
+        Flat/step variable:         last month value
+        Sporadic (health etc):      mean(6mo) × 1.05
+        Regular variable < 6mo:     mean × 1.05
+        Regular variable 6–24mo:    mean(6mo) × 1.05
+        Regular variable 25+mo:     SARIMA (full seasonality)
+                                    fallback → weighted mean × 1.07
         """
         values = values[values > 0]
-        if len(values) == 0:
+        n = len(values)
+
+        if n == 0:
             return 0.0
 
+        # ── Fixed categories ──────────────────────────────────────────────────
         if category in FIXED_CATEGORIES:
-            return float(np.max(values[-1:]))
+            return float(values[-1])
 
-        if len(values) <= 5:
+        # ── Flat or step-change variable (e.g. gym, netflix) ─────────────────
+        if self._is_flat_or_step(values):
+            return float(values[-1])
+
+        # ── Sporadic categories — mean is most honest ─────────────────────────
+        if category in SPORADIC_CATEGORIES:
+            return self._mean_prediction(values)
+
+        # ── Regular variable — tiered by data availability ────────────────────
+        if n < 6:
             return float(np.mean(values)) * 1.05
 
+        if n <= 24:
+            return self._mean_prediction(values)
+
+        # 25+ months — SARIMA with full seasonality
         try:
             reg = MonthlySARIMATrendRegressor(
-                seasonal_period=12, max_pdq=3, max_PDQ=2, stepwise=True
+                seasonal_period=12, max_pdq=2, max_PDQ=1, stepwise=True
             ).fit(values)
+
+            if reg.is_flat:
+                return float(values[-1])
 
             if reg.is_fitted:
                 pred  = reg.predict_next()
                 h_max = float(values.max())
                 pred  = max(pred, h_max * 0.65)
                 pred  = min(pred, h_max * 1.25)
-                return pred * 1.05
+                return float(pred)
 
-            return float(np.mean(values[-6:])) * 1.07
+            # SARIMA failed — weighted mean fallback
+            weights = np.exp(np.linspace(0, 1, min(6, n)))
+            weights /= weights.sum()
+            return float(np.dot(weights, values[-6:])) * 1.07
 
         except Exception as e:
             print(f"[BudgetAI] SARIMA failed for {category}: {e}", file=sys.stderr)
-            return float(np.mean(values[-6:])) * 1.07
+            weights = np.exp(np.linspace(0, 1, min(6, n)))
+            weights /= weights.sum()
+            return float(np.dot(weights, values[-6:])) * 1.07
+
+    def _to_monthly_series(self, df: pd.DataFrame) -> dict:
+        """Convert expense dataframe → { category: np.array of monthly totals }"""
+        try:
+            df["date"] = df["date"].dt.tz_convert(None)
+        except TypeError:
+            df["date"] = df["date"].dt.tz_localize(None)
+
+        result = {}
+        for cat in df["category"].unique():
+            cat_df  = df[df["category"] == cat]
+            monthly = (
+                cat_df
+                .groupby(cat_df["date"].dt.to_period("M"))["amount"]
+                .sum()
+                .sort_index()
+            )
+            result[cat] = monthly.values
+        return result
 
     def _predict_all(self, transactions: list) -> dict:
         """Returns { db_category: predicted_amount } for next month."""
@@ -146,16 +239,11 @@ class BudgetAI:
             ), axis=1,
         )
 
+        monthly_series = self._to_monthly_series(df)
+
         predictions = {}
-        for cat in df["category"].unique():
-            cat_df  = df[df["category"] == cat]
-            monthly = (
-                cat_df
-                .groupby(cat_df["date"].dt.tz_localize(None).dt.to_period("M"))["amount"]
-                .sum()
-                .sort_index()
-            )
-            pred = self._predict_category(monthly.values, cat)
+        for cat, values in monthly_series.items():
+            pred = self._predict_category(values, cat)
             if pred > 0:
                 predictions[cat] = round(pred)
 
@@ -189,7 +277,11 @@ class BudgetAI:
             df = df.dropna(subset=["date"])
             df = self._filter_expenses(df)
             if not df.empty:
-                num_months = df["date"].dt.tz_localize(None).dt.to_period("M").nunique()
+                try:
+                    dates = df["date"].dt.tz_convert(None)
+                except TypeError:
+                    dates = df["date"].dt.tz_localize(None)
+                num_months = dates.dt.to_period("M").nunique()
 
         # ── AI predictions per category ───────────────────────────────────────
         predictions = self._predict_all(transaction_history)
@@ -219,22 +311,28 @@ class BudgetAI:
             savings        = monthly_income * 0.20
             needs_pct      = 0.625
             wants_pct      = 0.375
-            if num_months >= 3:
-                notes.append("50/30/20 rule applied, personalized from your spending history.")
-            else:
+
+            if num_months >= 25:
+                notes.append(
+                    "50/30/20 rule applied with full seasonal analysis from 2+ years of history."
+                )
+            elif num_months >= 6:
+                notes.append(
+                    "50/30/20 rule applied, personalized from your spending history."
+                )
+            elif num_months >= 1:
                 notes.append(
                     f"Only {num_months} month(s) of data — using 50/30/20 as a safe baseline. "
                     "Keep tracking for a fully personalized plan!"
                 )
 
-        # Split cap into buckets upfront
         needs_cap = spending_cap * needs_pct
         wants_cap = spending_cap * wants_pct
 
         needs_breakdown: dict = {}
         wants_breakdown: dict = {}
 
-        # ── Fixed (rent + emi & insurance) — deducted from needs_cap first ────
+        # ── Fixed — deducted from needs_cap first ─────────────────────────────
         fixed_total = 0.0
         for cat in FIXED_CATEGORIES:
             amt = pred_needs.get(cat, 0)
@@ -253,7 +351,7 @@ class BudgetAI:
         else:
             remaining_needs = needs_cap - fixed_total
 
-        # ── Variable needs — scaled to remaining_needs ────────────────────────
+        # ── Variable needs — scaled proportionally ────────────────────────────
         var_needs = {
             c: float(pred_needs[c])
             for c in NEEDS_CATEGORIES
@@ -264,7 +362,7 @@ class BudgetAI:
             for cat, amt in var_needs.items():
                 needs_breakdown[cat] = round(amt * (remaining_needs / var_sum))
 
-        # ── Wants — scaled to wants_cap ───────────────────────────────────────
+        # ── Wants — scaled proportionally ─────────────────────────────────────
         if pred_wants and wants_cap > 0:
             wants_sum = sum(pred_wants.values())
             for cat, amt in pred_wants.items():
@@ -290,7 +388,7 @@ class BudgetAI:
                 "other":         round(wants_cap * 0.10),
             }
 
-        # ── Hard cap trim (rounding safety) ───────────────────────────────────
+        # ── Hard cap trim ─────────────────────────────────────────────────────
         total = sum(needs_breakdown.values()) + sum(wants_breakdown.values())
         if total > spending_cap:
             overflow = total - spending_cap
@@ -309,7 +407,6 @@ class BudgetAI:
                         if overflow <= 0:
                             break
 
-        # Remove zeros
         needs_breakdown = {k: v for k, v in needs_breakdown.items() if v > 0}
         wants_breakdown = {k: v for k, v in wants_breakdown.items() if v > 0}
 
