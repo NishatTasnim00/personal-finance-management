@@ -104,7 +104,7 @@ class BudgetAI:
             return 0.0
 
         if category in FIXED_CATEGORIES:
-            return float(np.max(values[-4:]))
+            return float(np.max(values[-1:]))
 
         if len(values) <= 5:
             return float(np.mean(values)) * 1.05
