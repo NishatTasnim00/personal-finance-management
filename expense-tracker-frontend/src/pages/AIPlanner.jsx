@@ -99,7 +99,7 @@ const AIPlanner = () => {
           </p>
         </div>
         <div className="flex items-center gap-2 bg-base-100 p-2 rounded-lg shadow">
-            <Calendar className="w-5 h-5 text-primary" />
+            {/* <Calendar className="w-5 h-5 text-primary" /> */}
             <input 
                 type="month" 
                 className="input input-sm input-ghost focus:outline-none font-medium"
