@@ -91,12 +91,6 @@ export const defaultExpenseTypes = [
     icon: Shield,
     color: "#F43F5E",
   },
-  {
-    name: 'Health Care',
-    value: 'health',
-    icons: 'Hospital',
-    color: "#6366F1",
-  },
   { name: "Fitness", value: "fitness", icon: Dumbbell, color: "#EC4899" },
   { name: "Other", value: "other", icon: MoreHorizontal, color: "#6B7280" },
 ];
