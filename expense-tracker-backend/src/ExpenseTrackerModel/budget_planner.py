@@ -332,26 +332,42 @@ class BudgetAI:
         needs_breakdown: dict = {}
         wants_breakdown: dict = {}
 
-        # ── Fixed — deducted from needs_cap first ─────────────────────────────
-        fixed_total = 0.0
+        # ── Affordability check — before building any budget ──────────────────
+        # If income < rent + food(avg 6mo) + EMI, the user cannot afford basics.
+        # Return a warning instead of a misleading budget.
+        rent_predicted = float(pred_needs.get("rent", 0))
+        food_predicted = float(pred_needs.get("food and groceries", 0))
+        emi_predicted  = float(pred_needs.get("emi & insurance", 0))
+        minimum_needed = rent_predicted + food_predicted + emi_predicted
+
+        if minimum_needed > 0 and monthly_income < minimum_needed:
+            return {
+                "monthly_income":      int(monthly_income),
+                "recommended_savings": 0,
+                "total_living_budget": 0,
+                "needs_total":         0,
+                "needs_breakdown":     {},
+                "wants_total":         0,
+                "wants_breakdown":     {},
+                "unaffordable":        True,
+                "note": [
+                    f"🚨 Your income (৳{int(monthly_income):,}) is less than your minimum obligations — "
+                    f"rent ৳{int(rent_predicted):,} + food ৳{int(food_predicted):,} + EMI ৳{int(emi_predicted):,} = ৳{int(minimum_needed):,}. "
+                    f"A budget cannot be created. Please reduce your rent or EMI, or increase your income."
+                ],
+                "data_months": num_months,
+            }
+
+        # ── Normal allocation — 50/30/20 proportional split ───────────────────
+        # Needs: fixed first (rent, EMI), then variable needs proportionally
         for cat in FIXED_CATEGORIES:
             amt = pred_needs.get(cat, 0)
             if amt > 0:
-                allocated = min(float(amt), needs_cap - fixed_total)
-                if allocated > 0:
-                    needs_breakdown[cat] = round(allocated)
-                    fixed_total += allocated
+                needs_breakdown[cat] = round(float(amt))
 
-        if fixed_total >= needs_cap:
-            notes.append(
-                f"⚠️ Fixed essentials (rent + EMI ৳{int(fixed_total):,}) fill your entire "
-                f"needs budget (৳{int(needs_cap):,}). No room for other needs categories."
-            )
-            remaining_needs = 0.0
-        else:
-            remaining_needs = needs_cap - fixed_total
+        fixed_total     = sum(needs_breakdown.values())
+        remaining_needs = max(0.0, needs_cap - fixed_total)
 
-        # ── Variable needs — scaled proportionally ────────────────────────────
         var_needs = {
             c: float(pred_needs[c])
             for c in NEEDS_CATEGORIES
@@ -362,7 +378,7 @@ class BudgetAI:
             for cat, amt in var_needs.items():
                 needs_breakdown[cat] = round(amt * (remaining_needs / var_sum))
 
-        # ── Wants — scaled proportionally ─────────────────────────────────────
+        # Wants: proportional split
         if pred_wants and wants_cap > 0:
             wants_sum = sum(pred_wants.values())
             for cat, amt in pred_wants.items():
@@ -373,10 +389,10 @@ class BudgetAI:
             notes.append("No expense history — using standard starter allocation.")
             needs_breakdown = {
                 "rent":               round(needs_cap * 0.40),
-                "emi & insurance":    round(needs_cap * 0.10),
-                "food and groceries": round(needs_cap * 0.25),
+                "food and groceries": round(needs_cap * 0.28),
                 "bills":              round(needs_cap * 0.15),
                 "transport":          round(needs_cap * 0.10),
+                "emi & insurance":    round(needs_cap * 0.07),
             }
         if not wants_breakdown:
             notes.append("No discretionary history — using standard starter allocation.")
@@ -388,7 +404,7 @@ class BudgetAI:
                 "other":         round(wants_cap * 0.10),
             }
 
-        # ── Hard cap trim ─────────────────────────────────────────────────────
+        # ── Hard cap trim — total must never exceed spending_cap ──────────────
         total = sum(needs_breakdown.values()) + sum(wants_breakdown.values())
         if total > spending_cap:
             overflow = total - spending_cap

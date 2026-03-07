@@ -21,17 +21,18 @@ const runBudgetAI = (inputData) => {
     const scriptDir = path.dirname(scriptPath);
 
     console.log("Spawning python process:", pythonExecutable, scriptPath);
-    const pythonProcess = spawn(
-      `"${pythonExecutable}" "${scriptPath}"`,
-      [],
-      {
-        cwd: scriptDir,
-        shell: true,
-      }
-    );
+    // Pass executable and script as separate args (not one shell string) so
+    // spaces in directory names are handled correctly without shell quoting issues.
+    const pythonProcess = spawn(pythonExecutable, [scriptPath], {
+      cwd: scriptDir,
+    });
 
     let dataString = "";
     let errorString = "";
+
+    // Guard against EPIPE: if Python crashes before reading stdin, suppress the
+    // unhandled error event — the 'close' handler below will catch the failure.
+    pythonProcess.stdin.on("error", () => {});
 
     pythonProcess.stdin.write(JSON.stringify(inputData));
     pythonProcess.stdin.end();
@@ -194,6 +195,15 @@ export const generateBudgetPlan = async (req, res) => {
 
     // Run AI
     const result = await runBudgetAI(inputData);
+
+    // If income can't cover basics, return warning without saving anything
+    if (result.unaffordable) {
+      return res.status(422).json({
+        success: false,
+        unaffordable: true,
+        message: result.note[0],
+      });
+    }
 
     // Save to DB
     const planData = {
