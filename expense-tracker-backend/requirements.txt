@@ -1,16 +1,19 @@
-# MongoDB connection
-pymongo[srv]          # Required to connect with MongoDB Atlas
+# Core data
+pandas>=2.0.0
+numpy>=1.24.0
 
-# Date/time handling
-python-dateutil        # Advanced datetime parsing and manipulation
-pytz                  # Timezone support
+# ML / forecasting
+scikit-learn>=1.3.0
+statsmodels>=0.14.0
+pmdarima>=2.0.3
 
-# Optional: Data handling & analysis
-pandas                # For data frames and tabular data
-numpy                 # For numerical operations
-scikit-learn
-statsmodels
-pmdarima
+# MongoDB
+pymongo[srv]>=4.0.0
 
-# source .venv/bin/activate
+# Date/time
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+
+
 # pip install -r requirements.txt
